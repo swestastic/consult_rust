@@ -8,6 +8,9 @@ use crate::catalog;
 use crate::consult::link::LinkCommand;
 use crate::widgets::{self, gauge};
 
+/// Gap between the gauge grid and the window's right edge / scrollbar.
+const RIGHT_PAD: f32 = 12.0;
+
 impl ConsultApp {
     pub(crate) fn show_datastream(&mut self, ui: &mut egui::Ui) {
         if !self.connected() {
@@ -61,7 +64,7 @@ impl ConsultApp {
         });
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let avail = ui.available_width();
+            let avail = (ui.available_width() - RIGHT_PAD).max(100.0);
             let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
             let gsize = egui::vec2(gw, gw / 1.31);
 

@@ -165,7 +165,7 @@ impl ConsultApp {
             // ---- Gauges / value boxes for known columns
             let rpm_warn = self.config.rpm_warning as f64;
             let temp_warn = self.config.coolant_warning_display();
-            let avail = ui.available_width();
+            let avail = (ui.available_width() - 12.0).max(100.0);
             let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
             let gsize = egui::vec2(gw, gw / 1.31);
             let vsize = egui::vec2(gw, 60.0);
