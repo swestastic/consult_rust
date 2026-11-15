@@ -63,69 +63,71 @@ impl ConsultApp {
             });
         });
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let avail = (ui.available_width() - RIGHT_PAD).max(100.0);
-            let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
-            let gsize = egui::vec2(gw, gw / 1.31);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let avail = (ui.available_width() - RIGHT_PAD).max(100.0);
+                let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
+                let gsize = egui::vec2(gw, gw / 1.31);
 
-            egui::Grid::new("gauges")
-                .num_columns(cols)
-                .spacing([12.0, 12.0])
-                .show(ui, |ui| {
-                    let mut col = 0;
-                    for (spec, val) in specs.iter().zip(&values) {
-                        if catalog::is_digital(spec) {
-                            continue; // rendered in the digital region below
-                        }
-                        let v = val.unwrap_or(0.0);
-                        let warn = match spec.id {
-                            "rpm" => v >= rpm_warn,
-                            "coolant" => v >= temp_warn,
-                            _ => false,
-                        };
-                        let (min, max) = spec.range_for(&cfg);
-                        gauge(
-                            ui,
-                            gsize,
-                            &spec.title(&cfg),
-                            v,
-                            min,
-                            max,
-                            spec.decimals,
-                            warn,
-                        );
-                        col += 1;
-                        if col % cols == 0 {
-                            ui.end_row();
-                        }
-                    }
-                });
-
-            // ---- Digital register region (compact on/off indicators)
-            let digital: Vec<(&catalog::SensorSpec, Option<f64>)> = specs
-                .iter()
-                .zip(&values)
-                .filter(|(s, _)| catalog::is_digital(s))
-                .map(|(s, v)| (*s, *v))
-                .collect();
-            if !digital.is_empty() {
-                ui.add_space(10.0);
-                ui.label(RichText::new("Digital Registers").strong());
-                ui.add_space(4.0);
-                let (dcols, dw) = widgets::fit_columns(avail, 260.0, 420.0, 4, 12.0);
-                egui::Grid::new("digital_region")
-                    .num_columns(dcols)
+                egui::Grid::new("gauges")
+                    .num_columns(cols)
                     .spacing([12.0, 12.0])
                     .show(ui, |ui| {
-                        for (i, (spec, val)) in digital.iter().enumerate() {
-                            digital_panel(ui, spec, *val, dw);
-                            if (i + 1) % dcols == 0 {
+                        let mut col = 0;
+                        for (spec, val) in specs.iter().zip(&values) {
+                            if catalog::is_digital(spec) {
+                                continue; // rendered in the digital region below
+                            }
+                            let v = val.unwrap_or(0.0);
+                            let warn = match spec.id {
+                                "rpm" => v >= rpm_warn,
+                                "coolant" => v >= temp_warn,
+                                _ => false,
+                            };
+                            let (min, max) = spec.range_for(&cfg);
+                            gauge(
+                                ui,
+                                gsize,
+                                &spec.title(&cfg),
+                                v,
+                                min,
+                                max,
+                                spec.decimals,
+                                warn,
+                            );
+                            col += 1;
+                            if col % cols == 0 {
                                 ui.end_row();
                             }
                         }
                     });
-            }
-        });
+
+                // ---- Digital register region (compact on/off indicators)
+                let digital: Vec<(&catalog::SensorSpec, Option<f64>)> = specs
+                    .iter()
+                    .zip(&values)
+                    .filter(|(s, _)| catalog::is_digital(s))
+                    .map(|(s, v)| (*s, *v))
+                    .collect();
+                if !digital.is_empty() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Digital Registers").strong());
+                    ui.add_space(4.0);
+                    let (dcols, dw) = widgets::fit_columns(avail, 260.0, 420.0, 4, 12.0);
+                    egui::Grid::new("digital_region")
+                        .num_columns(dcols)
+                        .spacing([12.0, 12.0])
+                        .show(ui, |ui| {
+                            for (i, (spec, val)) in digital.iter().enumerate() {
+                                digital_panel(ui, spec, *val, dw);
+                                if (i + 1) % dcols == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                }
+            });
 
         // Log once per incoming frame.
         if self.logger.is_logging() && self.frame_seq != self.last_logged_seq {

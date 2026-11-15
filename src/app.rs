@@ -481,14 +481,24 @@ impl eframe::App for ConsultApp {
             });
         });
 
-        egui::CentralPanel::default_margins().show(ui, |ui| match self.page {
-            Page::Connect => self.show_connect(ui),
-            Page::DataStream => self.show_datastream(ui),
-            Page::Dtc => self.show_dtc(ui),
-            Page::Testing => self.show_testing(ui),
-            Page::Replay => self.show_replay(ui),
-            Page::Settings => self.show_settings(ui),
+        // No right margin so page scroll bars sit flush against the window
+        // edge; pages pad their own content as needed.
+        let central_frame = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin {
+            left: 8,
+            right: 0,
+            top: 8,
+            bottom: 8,
         });
+        egui::CentralPanel::default_margins()
+            .frame(central_frame)
+            .show(ui, |ui| match self.page {
+                Page::Connect => self.show_connect(ui),
+                Page::DataStream => self.show_datastream(ui),
+                Page::Dtc => self.show_dtc(ui),
+                Page::Testing => self.show_testing(ui),
+                Page::Replay => self.show_replay(ui),
+                Page::Settings => self.show_settings(ui),
+            });
 
         // Advance log playback with wall-clock time.
         if self.page == Page::Replay && self.replay.playing {

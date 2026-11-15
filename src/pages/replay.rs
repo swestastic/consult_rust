@@ -129,7 +129,10 @@ impl ConsultApp {
         let slider = egui::Slider::new(&mut t, 0.0..=duration.max(0.001))
             .show_value(false)
             .clamping(egui::SliderClamping::Always);
-        if ui.add_sized([ui.available_width(), 18.0], slider).changed() {
+        if ui
+            .add_sized([(ui.available_width() - 12.0).max(60.0), 18.0], slider)
+            .changed()
+        {
             self.replay.t = t;
             self.replay.last_tick = std::time::Instant::now();
         }
@@ -162,85 +165,94 @@ impl ConsultApp {
             (values, points)
         };
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // ---- Gauges / value boxes for known columns
-            let rpm_warn = self.config.rpm_warning as f64;
-            let temp_warn = self.config.coolant_warning_display();
-            let avail = (ui.available_width() - 12.0).max(100.0);
-            let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
-            let gsize = egui::vec2(gw, gw / 1.31);
-            let vsize = egui::vec2(gw, 60.0);
-            ui.add_space(4.0);
-            egui::Grid::new("replay_gauges")
-                .num_columns(cols)
-                .spacing([12.0, 12.0])
-                .show(ui, |ui| {
-                    for (i, name) in columns.iter().enumerate() {
-                        let v = values.get(i).copied().unwrap_or(0.0);
-                        match catalog::spec_for_column(name) {
-                            Some(spec) if spec.unit == catalog::UnitKind::Raw => {
-                                value_box(ui, name, v, 0, vsize);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // ---- Gauges / value boxes for known columns
+                let rpm_warn = self.config.rpm_warning as f64;
+                let temp_warn = self.config.coolant_warning_display();
+                let avail = (ui.available_width() - 12.0).max(100.0);
+                let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
+                let gsize = egui::vec2(gw, gw / 1.31);
+                let vsize = egui::vec2(gw, 60.0);
+                ui.add_space(4.0);
+                egui::Grid::new("replay_gauges")
+                    .num_columns(cols)
+                    .spacing([12.0, 12.0])
+                    .show(ui, |ui| {
+                        for (i, name) in columns.iter().enumerate() {
+                            let v = values.get(i).copied().unwrap_or(0.0);
+                            match catalog::spec_for_column(name) {
+                                Some(spec) if spec.unit == catalog::UnitKind::Raw => {
+                                    value_box(ui, name, v, 0, vsize);
+                                }
+                                Some(spec) => {
+                                    let (min, max) = spec.range_in(&speed_unit, &temp_unit);
+                                    let warn = match spec.id {
+                                        "rpm" => v >= rpm_warn,
+                                        "coolant" => v >= temp_warn,
+                                        _ => false,
+                                    };
+                                    widgets::gauge(
+                                        ui,
+                                        gsize,
+                                        name,
+                                        v,
+                                        min,
+                                        max,
+                                        spec.decimals,
+                                        warn,
+                                    );
+                                }
+                                None => value_box(ui, name, v, 2, vsize),
                             }
-                            Some(spec) => {
-                                let (min, max) = spec.range_in(&speed_unit, &temp_unit);
-                                let warn = match spec.id {
-                                    "rpm" => v >= rpm_warn,
-                                    "coolant" => v >= temp_warn,
-                                    _ => false,
-                                };
-                                widgets::gauge(ui, gsize, name, v, min, max, spec.decimals, warn);
+                            if (i + 1) % cols == 0 {
+                                ui.end_row();
                             }
-                            None => value_box(ui, name, v, 2, vsize),
                         }
-                        if (i + 1) % cols == 0 {
-                            ui.end_row();
+                    });
+
+                // ---- Channel toggles (double as plot legend)
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Plot:");
+                    for (i, name) in columns.iter().enumerate() {
+                        let on = self.replay.channels.get(i).copied().unwrap_or(false);
+                        let color = SERIES_COLORS[i % SERIES_COLORS.len()];
+                        let text = if on {
+                            RichText::new(name).color(color).strong()
+                        } else {
+                            RichText::new(name.as_str())
+                        };
+                        if ui.selectable_label(on, text).clicked()
+                            && let Some(ch) = self.replay.channels.get_mut(i)
+                        {
+                            *ch = !*ch;
                         }
                     }
+                    ui.separator();
+                    ui.checkbox(&mut self.replay.normalize, "Normalize")
+                        .on_hover_text(
+                            "Scale each channel to 0..1 so different units can be compared.",
+                        );
                 });
 
-            // ---- Channel toggles (double as plot legend)
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Plot:");
-                for (i, name) in columns.iter().enumerate() {
-                    let on = self.replay.channels.get(i).copied().unwrap_or(false);
-                    let color = SERIES_COLORS[i % SERIES_COLORS.len()];
-                    let text = if on {
-                        RichText::new(name).color(color).strong()
-                    } else {
-                        RichText::new(name.as_str())
-                    };
-                    if ui.selectable_label(on, text).clicked()
-                        && let Some(ch) = self.replay.channels.get_mut(i)
-                    {
-                        *ch = !*ch;
-                    }
-                }
-                ui.separator();
-                ui.checkbox(&mut self.replay.normalize, "Normalize")
-                    .on_hover_text(
-                        "Scale each channel to 0..1 so different units can be compared.",
-                    );
-            });
-
-            // ---- Plot
-            let series: Vec<Series> = points
-                .iter()
-                .zip(
-                    columns
+                // ---- Plot
+                let series: Vec<Series> =
+                    points
                         .iter()
-                        .enumerate()
-                        .filter(|(i, _)| self.replay.channels.get(*i).copied().unwrap_or(false)),
-                )
-                .map(|(pts, (i, _))| Series {
-                    color: SERIES_COLORS[i % SERIES_COLORS.len()],
-                    points: pts,
-                })
-                .collect();
+                        .zip(columns.iter().enumerate().filter(|(i, _)| {
+                            self.replay.channels.get(*i).copied().unwrap_or(false)
+                        }))
+                        .map(|(pts, (i, _))| Series {
+                            color: SERIES_COLORS[i % SERIES_COLORS.len()],
+                            points: pts,
+                        })
+                        .collect();
 
-            ui.add_space(4.0);
-            widgets::time_plot(ui, &series, duration, Some(self.replay.t), 180.0);
-        });
+                ui.add_space(4.0);
+                widgets::time_plot(ui, &series, duration, Some(self.replay.t), 180.0);
+            });
     }
 }
 
