@@ -12,6 +12,9 @@ use crate::logging::DataLogger;
 
 pub const TEST_MODE_LABEL: &str = "Test Mode (Simulated Data)";
 pub const REPLAY_SPEEDS: [f32; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
+/// Mid-session link failures trigger this many auto-reconnect attempts
+/// (2 s apart) before giving up.
+const MAX_RECONNECT_ATTEMPTS: u8 = 5;
 
 /// A detected serial port, with a USB description when available.
 pub struct PortInfo {
@@ -127,6 +130,10 @@ pub struct ConsultApp {
     /// Set once a lone detected port has been auto-selected, so we don't
     /// keep overriding a deliberate user choice.
     pub port_autoselected: bool,
+    /// Auto-reconnect state: attempts so far (0 = not retrying) and when
+    /// the next attempt fires.
+    pub reconnect_attempts: u8,
+    pub reconnect_at: Option<Instant>,
     pub streaming: bool,
     pub frame: Option<Vec<u8>>,
     pub frame_seq: u64,
@@ -222,6 +229,8 @@ impl ConsultApp {
             last_port_scan: Instant::now() - Duration::from_secs(10),
             selected_port: TEST_MODE_LABEL.into(),
             port_autoselected: false,
+            reconnect_attempts: 0,
+            reconnect_at: None,
             streaming: false,
             frame: None,
             frame_seq: 0,
@@ -302,6 +311,7 @@ impl ConsultApp {
     }
 
     pub fn connect(&mut self) {
+        self.reconnect_at = None;
         if self.selected_port == TEST_MODE_LABEL {
             match LinkHandle::start_simulator(self.evt_tx.clone()) {
                 Ok(link) => {
@@ -339,7 +349,25 @@ impl ConsultApp {
         self.streaming = false;
         self.frame = None;
         self.logger.stop();
+        self.reconnect_attempts = 0;
+        self.reconnect_at = None;
         self.status = "Disconnected.".into();
+    }
+
+    /// Drop the dead link and schedule another connect attempt.
+    fn schedule_reconnect(&mut self, reason: &str) {
+        self.link = None;
+        self.conn = ConnState::Disconnected;
+        self.connecting_since = None;
+        self.streaming = false;
+        self.frame = None;
+        self.logger.stop();
+        self.reconnect_attempts += 1;
+        self.reconnect_at = Some(Instant::now() + Duration::from_secs(2));
+        self.status = format!(
+            "{reason} Reconnecting in 2 s (attempt {}/{MAX_RECONNECT_ATTEMPTS}).",
+            self.reconnect_attempts
+        );
     }
 
     pub fn set_page(&mut self, page: Page) {
@@ -409,6 +437,8 @@ impl ConsultApp {
                 LinkEvent::Connected => {
                     self.conn = ConnState::Connected;
                     self.connecting_since = None;
+                    self.reconnect_attempts = 0;
+                    self.reconnect_at = None;
                     self.peaks.clear();
                     self.status = if self.test_mode() {
                         "Test mode: simulated data.".into()
@@ -445,17 +475,34 @@ impl ConsultApp {
                 }
                 LinkEvent::RawLog(line) => self.testing.push_log(line),
                 LinkEvent::Error(e) => {
-                    self.status = e.clone();
-                    if self.conn == ConnState::Connecting {
-                        self.link = None;
-                        self.conn = ConnState::Disconnected;
-                        self.connecting_since = None;
-                    } else if self.conn == ConnState::Connected {
-                        // Link died mid-session (cable unplugged, etc.).
-                        self.disconnect();
-                        self.status = e;
-                    }
                     self.dtc.busy = false;
+                    let mid_session = self.conn == ConnState::Connected;
+                    let retrying =
+                        self.conn == ConnState::Connecting && self.reconnect_attempts > 0;
+                    if (mid_session || retrying) && !self.test_mode() {
+                        if self.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                            self.link = None;
+                            self.conn = ConnState::Disconnected;
+                            self.connecting_since = None;
+                            self.streaming = false;
+                            self.reconnect_attempts = 0;
+                            self.reconnect_at = None;
+                            self.status = format!("Gave up reconnecting: {e}");
+                        } else {
+                            self.schedule_reconnect(&e);
+                        }
+                    } else {
+                        self.status = e.clone();
+                        if self.conn == ConnState::Connecting {
+                            self.link = None;
+                            self.conn = ConnState::Disconnected;
+                            self.connecting_since = None;
+                        } else if self.conn == ConnState::Connected {
+                            // Test-mode simulator failure.
+                            self.disconnect();
+                            self.status = e;
+                        }
+                    }
                 }
             }
         }
@@ -477,6 +524,18 @@ impl ConsultApp {
             && self.last_port_scan.elapsed() > Duration::from_secs(2)
         {
             self.refresh_ports();
+        }
+
+        // Fire a scheduled auto-reconnect attempt.
+        if self.conn == ConnState::Disconnected
+            && let Some(at) = self.reconnect_at
+            && Instant::now() >= at
+        {
+            self.status = format!(
+                "Reconnecting (attempt {}/{MAX_RECONNECT_ATTEMPTS})...",
+                self.reconnect_attempts
+            );
+            self.connect();
         }
     }
 }
