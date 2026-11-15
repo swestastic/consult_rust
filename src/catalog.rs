@@ -105,7 +105,7 @@ pub const CATALOG: &[SensorSpec] = &[
         unit: UnitKind::Volts,
         range: (0.0, 5.0),
         decimals: 2,
-        desc: "Right-bank MAF signal on twin-MAF cars (e.g. Z32 TT). 16-bit x 5 mV.",
+        desc: "Right-bank MAF signal on twin-MAF cars (e.g. R32 GT-R). 16-bit x 5 mV.",
         typical: "Should closely track the LH MAF.",
     },
     SensorSpec {
