@@ -27,13 +27,17 @@ impl ConsultApp {
         );
         ui.add_space(6.0);
 
-        show_live_readouts(self, ui);
-        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                show_live_readouts(self, ui);
+                ui.add_space(6.0);
 
-        ui.columns(2, |cols| {
-            show_controls(self, &mut cols[0]);
-            show_raw(self, &mut cols[1]);
-        });
+                ui.columns(2, |cols| {
+                    show_controls(self, &mut cols[0]);
+                    show_raw(self, &mut cols[1]);
+                });
+            });
     }
 
     fn send_activation(&mut self, kind: u8, data: u8) {
