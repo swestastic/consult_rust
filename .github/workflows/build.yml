@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: consult-rust.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: consult-rust
+          # Intel Macs. If this runner label is unavailable, build from
+          # source on the machine: `cargo build --release`.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bin: consult-rust
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: consult-rust
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: consult-rust-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.bin }}

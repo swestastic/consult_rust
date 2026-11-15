@@ -1,0 +1,158 @@
+//! Settings page: edit and persist `consult_config.json`.
+
+use crate::app::ConsultApp;
+use crate::config::{CONFIG_FILE, SpeedUnit, TempUnit};
+
+impl ConsultApp {
+    /// Copy the live config into the text edit buffer.
+    pub(crate) fn load_settings_buffer(&mut self) {
+        let c = &self.config;
+        self.settings = crate::app::SettingsState {
+            speed_unit: c.speed_unit,
+            temp_unit: c.temp_unit,
+            rpm_warning: c.rpm_warning.to_string(),
+            coolant_warning: format!("{:.1}", c.coolant_warning_display()),
+            stock_width: fmt(c.stock_tire.width_mm),
+            stock_aspect: fmt(c.stock_tire.aspect),
+            stock_rim: fmt(c.stock_tire.rim_in),
+            new_width: fmt(c.new_tire.width_mm),
+            new_aspect: fmt(c.new_tire.aspect),
+            new_rim: fmt(c.new_tire.rim_in),
+            stock_final: fmt(c.stock_final_drive),
+            new_final: fmt(c.new_final_drive),
+            ecu_address: c.ecu_address.clone(),
+            status: String::new(),
+        };
+    }
+
+    pub(crate) fn show_settings(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        let s = &mut self.settings;
+
+        egui::Grid::new("settings_grid")
+            .num_columns(4)
+            .spacing([10.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Speed units:");
+                egui::ComboBox::from_id_salt("speed_unit")
+                    .selected_text(s.speed_unit.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut s.speed_unit, SpeedUnit::Mph, "MPH");
+                        ui.selectable_value(&mut s.speed_unit, SpeedUnit::Kph, "KPH");
+                    });
+                ui.end_row();
+
+                ui.label("Temp units:");
+                egui::ComboBox::from_id_salt("temp_unit")
+                    .selected_text(s.temp_unit.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut s.temp_unit, TempUnit::F, "F");
+                        ui.selectable_value(&mut s.temp_unit, TempUnit::C, "C");
+                    });
+                ui.end_row();
+
+                ui.label("RPM warning:");
+                ui.add(egui::TextEdit::singleline(&mut s.rpm_warning).desired_width(80.0));
+                ui.end_row();
+
+                ui.label("Coolant warning:");
+                ui.add(egui::TextEdit::singleline(&mut s.coolant_warning).desired_width(80.0));
+                ui.label(format!("°{}", s.temp_unit.label()));
+                ui.end_row();
+
+                ui.label("ECU address (hex):");
+                ui.add(egui::TextEdit::singleline(&mut s.ecu_address).desired_width(80.0));
+                ui.label("EF for most ECUs; ED for many '96+");
+                ui.end_row();
+            });
+
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new("Speedometer correction").strong());
+        ui.add_space(4.0);
+
+        let s = &mut self.settings;
+        egui::Grid::new("correction_grid")
+            .num_columns(4)
+            .spacing([10.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("");
+                ui.label(egui::RichText::new("Stock").strong());
+                ui.label(egui::RichText::new("New").strong());
+                ui.end_row();
+
+                ui.label("Tire width (mm):");
+                ui.add(egui::TextEdit::singleline(&mut s.stock_width).desired_width(80.0));
+                ui.add(egui::TextEdit::singleline(&mut s.new_width).desired_width(80.0));
+                ui.end_row();
+
+                ui.label("Aspect ratio:");
+                ui.add(egui::TextEdit::singleline(&mut s.stock_aspect).desired_width(80.0));
+                ui.add(egui::TextEdit::singleline(&mut s.new_aspect).desired_width(80.0));
+                ui.end_row();
+
+                ui.label("Rim diameter (in):");
+                ui.add(egui::TextEdit::singleline(&mut s.stock_rim).desired_width(80.0));
+                ui.add(egui::TextEdit::singleline(&mut s.new_rim).desired_width(80.0));
+                ui.end_row();
+
+                ui.label("Final drive:");
+                ui.add(egui::TextEdit::singleline(&mut s.stock_final).desired_width(80.0));
+                ui.add(egui::TextEdit::singleline(&mut s.new_final).desired_width(80.0));
+                ui.end_row();
+            });
+
+        ui.add_space(12.0);
+        if ui.button("Save").clicked() {
+            match self.apply_settings() {
+                Ok(()) => {
+                    self.settings.status = format!("Saved to {CONFIG_FILE}.");
+                    self.status = "Settings saved.".into();
+                }
+                Err(e) => self.settings.status = e,
+            }
+        }
+        if !self.settings.status.is_empty() {
+            ui.label(&self.settings.status);
+        }
+    }
+
+    /// Parse the edit buffer into the live config and write it to disk.
+    fn apply_settings(&mut self) -> Result<(), String> {
+        let s = &self.settings;
+        let f = |name: &str, v: &str| -> Result<f64, String> {
+            v.trim()
+                .parse::<f64>()
+                .map_err(|_| format!("{name}: \"{v}\" is not a number"))
+        };
+        let rpm_warning: u32 = s
+            .rpm_warning
+            .trim()
+            .parse()
+            .map_err(|_| format!("RPM warning: \"{}\" is not a number", s.rpm_warning))?;
+
+        let mut cfg = self.config.clone();
+        cfg.speed_unit = s.speed_unit;
+        cfg.temp_unit = s.temp_unit;
+        cfg.rpm_warning = rpm_warning;
+        cfg.coolant_warning_c = cfg.temp_to_c(f("Coolant warning", &s.coolant_warning)?);
+        cfg.stock_tire.width_mm = f("Stock tire width", &s.stock_width)?;
+        cfg.stock_tire.aspect = f("Stock aspect ratio", &s.stock_aspect)?;
+        cfg.stock_tire.rim_in = f("Stock rim", &s.stock_rim)?;
+        cfg.new_tire.width_mm = f("New tire width", &s.new_width)?;
+        cfg.new_tire.aspect = f("New aspect ratio", &s.new_aspect)?;
+        cfg.new_tire.rim_in = f("New rim", &s.new_rim)?;
+        cfg.stock_final_drive = f("Stock final drive", &s.stock_final)?;
+        cfg.new_final_drive = f("New final drive", &s.new_final)?;
+        cfg.ecu_address = s.ecu_address.trim().to_uppercase();
+        cfg.ecu_address_byte()?; // validate
+
+        cfg.save()?;
+        self.config = cfg;
+        Ok(())
+    }
+}
+
+fn fmt(v: f64) -> String {
+    let s = format!("{v:.3}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
