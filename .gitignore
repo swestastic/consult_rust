@@ -11,6 +11,9 @@
 # Legacy Python prototype (tracked separately / kept local)
 /PyConsult
 
+# consult_box hardware-box prototype (reference material)
+/consult_box
+
 # OS junk
 Thumbs.db
 .DS_Store

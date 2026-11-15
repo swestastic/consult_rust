@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::consult::protocol::*;
 
 pub enum LinkCommand {
-    StartStream,
+    StartStream(Vec<u8>),
     StopStream,
     ReadDtc,
     ClearDtc,
@@ -108,6 +108,7 @@ fn serial_worker(
 
     let mut parser = FrameParser::new();
     let mut streaming = false;
+    let mut stream_regs: Vec<u8> = Vec::new();
     let mut buf = [0u8; 512];
 
     loop {
@@ -120,8 +121,9 @@ fn serial_worker(
                     }
                     return;
                 }
-                Ok(LinkCommand::StartStream) => {
-                    let _ = port.write_all(&stream_command());
+                Ok(LinkCommand::StartStream(regs)) => {
+                    stream_regs = regs;
+                    let _ = port.write_all(&build_stream_command(&stream_regs));
                     let _ = port.flush();
                     streaming = true;
                 }
@@ -135,7 +137,7 @@ fn serial_worker(
                     }
                     run_query(cmd, &mut *port, &mut parser, &evt);
                     if streaming {
-                        let _ = port.write_all(&stream_command());
+                        let _ = port.write_all(&build_stream_command(&stream_regs));
                         let _ = port.flush();
                     }
                 }
@@ -149,7 +151,7 @@ fn serial_worker(
                 for &b in &buf[..n] {
                     match parser.feed(b) {
                         Some(ParserOutput::Frame(frame)) => {
-                            let is_stream = frame.len() == STREAM_REGISTERS.len();
+                            let is_stream = frame.len() == stream_regs.len();
                             let out = if streaming && is_stream {
                                 LinkEvent::StreamFrame(frame)
                             } else {
@@ -346,13 +348,17 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
     }
     let mut rng = XorShift(0x2545_F491_4F6C_DD1D);
     let mut streaming = false;
+    let mut stream_regs: Vec<u8> = Vec::new();
     let mut next_frame = Instant::now();
 
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 LinkCommand::Shutdown => return,
-                LinkCommand::StartStream => streaming = true,
+                LinkCommand::StartStream(regs) => {
+                    stream_regs = regs;
+                    streaming = true;
+                }
                 LinkCommand::StopStream => streaming = false,
                 LinkCommand::ReadDtc => {
                     std::thread::sleep(Duration::from_millis(300));
@@ -379,7 +385,10 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
 
         if streaming && Instant::now() >= next_frame {
             next_frame = Instant::now() + Duration::from_millis(100);
-            if evt.send(LinkEvent::StreamFrame(sim_frame(&mut rng))).is_err() {
+            if evt
+                .send(LinkEvent::StreamFrame(sim_frame(&mut rng, &stream_regs)))
+                .is_err()
+            {
                 return;
             }
         } else {
@@ -388,22 +397,48 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
     }
 }
 
-/// Build a raw 13-byte frame whose decoded readings look plausible.
-fn sim_frame(rng: &mut XorShift) -> Vec<u8> {
-    let mut f = vec![0u8; STREAM_REGISTERS.len()];
-    let put16 = |f: &mut Vec<u8>, i: usize, v: u16| {
-        f[i] = (v >> 8) as u8;
-        f[i + 1] = v as u8;
-    };
-    put16(&mut f, 0, (rng.range(700.0, 5200.0) / 12.5) as u16); // RPM
-    f[2] = (rng.range(0.0, 180.0) / 2.0) as u8; // speed kph
-    f[3] = (rng.range(80.0, 100.0) + 50.0) as u8; // coolant C
-    f[4] = (rng.range(13.5, 14.6) * 1000.0 / 80.0) as u8; // battery V
-    f[5] = (rng.range(0.4, 4.4) * 1000.0 / 20.0) as u8; // TPS V
-    put16(&mut f, 6, (rng.range(0.9, 3.8) * 1000.0 / 5.0) as u16); // MAF V
-    f[8] = (rng.range(4.0, 40.0) * 2.0) as u8; // AAC %
-    put16(&mut f, 9, (rng.range(1.5, 12.0) * 100.0) as u16); // injector ms
-    f[11] = (110.0 - rng.range(10.0, 38.0)) as u8; // timing deg
-    f[12] = (rng.range(0.05, 0.95) * 100.0) as u8; // O2 V
-    f
+/// Build a raw frame matching the requested register list, with plausible
+/// decoded values.
+fn sim_frame(rng: &mut XorShift, regs: &[u8]) -> Vec<u8> {
+    // Physical values for this tick.
+    let rpm_raw = (rng.range(700.0, 5200.0) / 12.5) as u16;
+    let speed = rng.range(0.0, 180.0);
+    let coolant_c = rng.range(80.0, 100.0);
+    let batt = rng.range(13.5, 14.6);
+    let tps = rng.range(0.4, 4.4);
+    let maf_raw = (rng.range(0.9, 3.8) * 1000.0 / 5.0) as u16;
+    let o2 = rng.range(0.05, 0.95);
+    let inj_raw = (rng.range(1.5, 12.0) * 100.0) as u16;
+    let timing = rng.range(10.0, 38.0);
+    let aac = rng.range(4.0, 40.0);
+    let temp_c = rng.range(10.0, 45.0);
+    let egt = rng.range(0.5, 4.0);
+    let alpha = rng.range(85.0, 115.0);
+
+    regs.iter()
+        .map(|&reg| match reg {
+            0x00 => (rpm_raw >> 8) as u8,
+            0x01 => rpm_raw as u8,
+            0x02 => 0,
+            0x03 => (rpm_raw / 2) as u8, // CAS ref, rough
+            0x04 => (maf_raw >> 8) as u8,
+            0x05 => maf_raw as u8,
+            0x06 => (maf_raw >> 8) as u8,
+            0x07 => maf_raw as u8,
+            0x08 => (coolant_c + 50.0) as u8,
+            0x09 | 0x0A => (o2 * 100.0) as u8,
+            0x0B => (speed / 2.0) as u8,
+            0x0C => (batt * 1000.0 / 80.0) as u8,
+            0x0D => (tps * 1000.0 / 20.0) as u8,
+            0x0F | 0x11 => (temp_c + 50.0) as u8,
+            0x12 => (egt * 1000.0 / 20.0) as u8,
+            0x13 | 0x1E | 0x1F | 0x21 => (rng.next() & 0xFF) as u8,
+            0x14 | 0x22 => (inj_raw >> 8) as u8,
+            0x15 | 0x23 => inj_raw as u8,
+            0x16 => (110.0 - timing) as u8,
+            0x17 => (aac * 2.0) as u8,
+            0x1A..=0x1D => alpha as u8,
+            _ => (rng.next() & 0xFF) as u8,
+        })
+        .collect()
 }

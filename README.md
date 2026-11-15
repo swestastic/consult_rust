@@ -8,6 +8,9 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
 
 - Live data stream with gauges: RPM, speed, coolant temp, TPS, timing, battery,
   AAC, injector pulse, plus MAF/O2 readouts
+- Selectable display items: pick which ECU registers to stream (Settings ->
+  Displayed items); 24 known sensors/registers including dual-bank MAF/O2/
+  injector, AF alpha/self-learn, and raw digital bit registers
 - CSV data logging to `logs/`
 - Log replay: load saved logs, play them back through the gauges with
   play/pause/speed/scrub controls, and inspect channels on a time-series plot

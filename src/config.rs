@@ -65,6 +65,8 @@ pub struct Config {
     pub coolant_warning_c: f64,
     /// ECU init address as hex text, e.g. "EF" (some '96+ ECUs use "ED").
     pub ecu_address: String,
+    /// Selected data-stream items (catalog ids), user-editable in Settings.
+    pub display_items: Vec<String>,
 }
 
 impl Default for Config {
@@ -87,16 +89,22 @@ impl Default for Config {
             rpm_warning: 7000,
             coolant_warning_c: 93.5,
             ecu_address: "EF".into(),
+            display_items: crate::catalog::DEFAULT_SELECTION
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
 
 impl Config {
     pub fn load() -> Config {
-        std::fs::read_to_string(CONFIG_FILE)
+        let mut cfg: Config = std::fs::read_to_string(CONFIG_FILE)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cfg.display_items = crate::catalog::sanitize_selection(cfg.display_items);
+        cfg
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -152,5 +160,15 @@ impl Config {
 
     pub fn coolant_warning_display(&self) -> f64 {
         self.display_temp(self.coolant_warning_c)
+    }
+
+    /// Selected catalog items in display order.
+    pub fn selected_specs(&self) -> Vec<&'static crate::catalog::SensorSpec> {
+        crate::catalog::selected_specs(&self.display_items)
+    }
+
+    /// Flat register list for the stream request.
+    pub fn stream_registers(&self) -> Vec<u8> {
+        crate::catalog::expand_registers(&self.selected_specs())
     }
 }

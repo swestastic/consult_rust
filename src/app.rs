@@ -99,6 +99,8 @@ pub struct SettingsState {
     pub ecu_address: String,
     pub speed_unit: crate::config::SpeedUnit,
     pub temp_unit: crate::config::TempUnit,
+    /// Selected display item ids (edits config.display_items on save).
+    pub items: Vec<String>,
     pub status: String,
 }
 
@@ -135,7 +137,8 @@ pub struct ReplayState {
     /// Playback position in seconds.
     pub t: f64,
     pub last_tick: Instant,
-    pub channels: [bool; 9],
+    /// One toggle per column of the loaded log.
+    pub channels: Vec<bool>,
     pub normalize: bool,
     pub status: String,
 }
@@ -150,7 +153,7 @@ impl Default for ReplayState {
             speed: 1.0,
             t: 0.0,
             last_tick: Instant::now(),
-            channels: [true, true, false, false, false, false, false, false, false],
+            channels: Vec::new(),
             normalize: false,
             status: String::new(),
         }
@@ -297,7 +300,8 @@ impl ConsultApp {
             self.streaming = false;
         }
         if page == Page::DataStream && self.connected() && !self.streaming {
-            self.send(LinkCommand::StartStream);
+            let regs = self.config.stream_registers();
+            self.send(LinkCommand::StartStream(regs));
             self.streaming = true;
         }
         if page == Page::Settings {
@@ -347,7 +351,8 @@ impl ConsultApp {
                         format!("Connected to ECU on {}.", self.selected_port)
                     };
                     if self.page == Page::DataStream && !self.streaming {
-                        self.send(LinkCommand::StartStream);
+                        let regs = self.config.stream_registers();
+                        self.send(LinkCommand::StartStream(regs));
                         self.streaming = true;
                     }
                 }

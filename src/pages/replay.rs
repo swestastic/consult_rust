@@ -1,10 +1,13 @@
-//! Log Replay page: load a saved CSV log, play it back through the gauges,
-//! scrub the timeline, and inspect channels on a time-series plot.
+//! Log Replay page: load a saved CSV log, play it back through gauges,
+//! scrub the timeline, and inspect columns on a time-series plot.
+//! Columns are dynamic, following whatever was selected when the log
+//! was recorded; known columns get gauges, the rest get value boxes.
 
 use egui::RichText;
 
 use crate::app::{ConsultApp, REPLAY_SPEEDS};
-use crate::logfile::{CHANNEL_NAMES, LogFile};
+use crate::catalog;
+use crate::logfile::LogFile;
 use crate::widgets::{self, SERIES_COLORS, Series};
 
 impl ConsultApp {
@@ -53,6 +56,8 @@ impl ConsultApp {
                         );
                         self.replay.t = 0.0;
                         self.replay.playing = false;
+                        // Default: plot the first two columns.
+                        self.replay.channels = (0..log.columns.len()).map(|i| i < 2).collect();
                         self.replay.log = Some(log);
                     }
                     Err(e) => {
@@ -73,14 +78,18 @@ impl ConsultApp {
             return;
         }
 
-        let (duration, speed_unit, temp_unit) = {
+        let (duration, speed_unit, temp_unit, columns) = {
             let log = self.replay.log.as_ref().unwrap();
             (
                 log.duration(),
                 log.speed_unit.clone(),
                 log.temp_unit.clone(),
+                log.columns.clone(),
             )
         };
+        if self.replay.channels.len() != columns.len() {
+            self.replay.channels = (0..columns.len()).map(|i| i < 2).collect();
+        }
 
         // ---- Transport controls
         ui.add_space(4.0);
@@ -114,23 +123,23 @@ impl ConsultApp {
             self.replay.last_tick = std::time::Instant::now();
         }
 
-        // ---- Sample data for the current position (immutable borrow phase)
-        let (row, points) = {
+        // ---- Sample + plot data for the current position (immutable phase)
+        let (values, points) = {
             let log = self.replay.log.as_ref().unwrap();
-            let row = log.sample(self.replay.t);
+            let values = log.sample(self.replay.t);
             let normalize = self.replay.normalize;
             let mut points: Vec<Vec<[f64; 2]>> = Vec::new();
-            for i in 0..CHANNEL_NAMES.len() {
-                if !self.replay.channels[i] {
+            for (i, _) in columns.iter().enumerate() {
+                if !self.replay.channels.get(i).copied().unwrap_or(false) {
                     continue;
                 }
                 let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
                 let mut pts: Vec<[f64; 2]> = Vec::with_capacity(log.rows.len());
                 for r in &log.rows {
-                    let v = r.channel(i);
+                    let v = r.1.get(i).copied().unwrap_or(0.0);
                     lo = lo.min(v);
                     hi = hi.max(v);
-                    pts.push([r.t, v]);
+                    pts.push([r.0, v]);
                 }
                 if normalize && hi > lo {
                     for p in &mut pts {
@@ -139,68 +148,98 @@ impl ConsultApp {
                 }
                 points.push(pts);
             }
-            (row, points)
+            (values, points)
         };
 
-        // ---- Gauges (recorded units)
-        let speed_max = if speed_unit == "MPH" { 160.0 } else { 260.0 };
-        let (temp_min, temp_max) = if temp_unit == "F" {
-            (100.0, 250.0)
-        } else {
-            (40.0, 120.0)
-        };
-        let temp_warn = self.config.coolant_warning_display();
-        let rpm_warn = self.config.rpm_warning as f64;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // ---- Gauges / value boxes for known columns
+            let rpm_warn = self.config.rpm_warning as f64;
+            let temp_warn = self.config.coolant_warning_display();
+            ui.add_space(4.0);
+            egui::Grid::new("replay_gauges")
+                .num_columns(3)
+                .spacing([12.0, 12.0])
+                .show(ui, |ui| {
+                    for (i, name) in columns.iter().enumerate() {
+                        let v = values.get(i).copied().unwrap_or(0.0);
+                        match catalog::spec_for_column(name) {
+                            Some(spec) if spec.unit == catalog::UnitKind::Raw => {
+                                value_box(ui, name, v, 0);
+                            }
+                            Some(spec) => {
+                                let (min, max) = spec.range_in(&speed_unit, &temp_unit);
+                                let warn = match spec.id {
+                                    "rpm" => v >= rpm_warn,
+                                    "coolant" => v >= temp_warn,
+                                    _ => false,
+                                };
+                                widgets::gauge(ui, name, v, min, max, spec.decimals, warn);
+                            }
+                            None => value_box(ui, name, v, 2),
+                        }
+                        if i % 3 == 2 {
+                            ui.end_row();
+                        }
+                    }
+                });
 
-        ui.add_space(4.0);
-        egui::Grid::new("replay_gauges")
-            .num_columns(3)
-            .spacing([12.0, 12.0])
-            .show(ui, |ui| {
-                widgets::gauge(ui, "RPM", row.rpm, 0.0, 8000.0, 0, row.rpm >= rpm_warn);
-                widgets::gauge(ui, &format!("Speed ({speed_unit})"), row.speed, 0.0, speed_max, 0, false);
-                widgets::gauge(ui, &format!("Coolant (°{temp_unit})"), row.temp, temp_min, temp_max, 0, row.temp >= temp_warn);
-                ui.end_row();
-                widgets::gauge(ui, "TPS (V)", row.tps, 0.0, 5.0, 2, false);
-                widgets::gauge(ui, "Timing (°BTDC)", row.timing, -10.0, 50.0, 0, false);
-                widgets::gauge(ui, "Battery (V)", row.batt, 8.0, 16.0, 1, false);
-                ui.end_row();
-                widgets::gauge(ui, "AAC (%)", row.aac, 0.0, 100.0, 0, false);
-                widgets::gauge(ui, "Injector (ms)", row.inj, 0.0, 20.0, 1, false);
-                ui.end_row();
+            // ---- Channel toggles (double as plot legend)
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Plot:");
+                for (i, name) in columns.iter().enumerate() {
+                    let on = self.replay.channels.get(i).copied().unwrap_or(false);
+                    let color = SERIES_COLORS[i % SERIES_COLORS.len()];
+                    let text = if on {
+                        RichText::new(name).color(color).strong()
+                    } else {
+                        RichText::new(name.as_str())
+                    };
+                    if ui.selectable_label(on, text).clicked()
+                        && let Some(ch) = self.replay.channels.get_mut(i)
+                    {
+                        *ch = !*ch;
+                    }
+                }
+                ui.separator();
+                ui.checkbox(&mut self.replay.normalize, "Normalize")
+                    .on_hover_text("Scale each channel to 0..1 so different units can be compared.");
             });
 
-        // ---- Channel toggles (double as plot legend)
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Plot:");
-            for (i, name) in CHANNEL_NAMES.iter().enumerate() {
-                let on = self.replay.channels[i];
-                let text = if on {
-                    RichText::new(*name).color(SERIES_COLORS[i]).strong()
-                } else {
-                    RichText::new(*name)
-                };
-                if ui.selectable_label(on, text).clicked() {
-                    self.replay.channels[i] = !on;
-                }
-            }
-            ui.separator();
-            ui.checkbox(&mut self.replay.normalize, "Normalize")
-                .on_hover_text("Scale each channel to 0..1 so different units can be compared.");
+            // ---- Plot
+            let series: Vec<Series> = points
+                .iter()
+                .zip(
+                    columns
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| self.replay.channels.get(*i).copied().unwrap_or(false)),
+                )
+                .map(|(pts, (i, _))| Series {
+                    color: SERIES_COLORS[i % SERIES_COLORS.len()],
+                    points: pts,
+                })
+                .collect();
+
+            ui.add_space(4.0);
+            widgets::time_plot(ui, &series, duration, Some(self.replay.t), 180.0);
         });
-
-        // ---- Plot
-        let series: Vec<Series> = points
-            .iter()
-            .zip(CHANNEL_NAMES.iter().enumerate().filter(|(i, _)| self.replay.channels[*i]))
-            .map(|(pts, (i, _))| Series {
-                color: SERIES_COLORS[i],
-                points: pts,
-            })
-            .collect();
-
-        ui.add_space(4.0);
-        widgets::time_plot(ui, &series, duration, Some(self.replay.t), 180.0);
     }
+}
+
+/// Plain value box for columns without a known gauge.
+fn value_box(ui: &mut egui::Ui, title: &str, value: f64, decimals: usize) {
+    egui::Frame::group(ui.style())
+        .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
+        .show(ui, |ui| {
+            ui.set_min_size(egui::vec2(230.0, 60.0));
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(title).weak());
+                ui.label(
+                    RichText::new(format!("{value:.decimals$}"))
+                        .monospace()
+                        .size(18.0),
+                );
+            });
+        });
 }

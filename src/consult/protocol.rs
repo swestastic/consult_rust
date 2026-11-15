@@ -28,24 +28,6 @@ pub mod activate {
     pub const CLEAR_SELF_LEARN: u8 = 0x8B; // data = 0x00
 }
 
-/// Registers requested in data-stream mode, in request order. The ECU answers
-/// each frame with one byte per register in this same order.
-pub const STREAM_REGISTERS: [u8; 13] = [
-    0x00, // CAS position (RPM) MSB
-    0x01, // CAS position (RPM) LSB
-    0x0B, // vehicle speed
-    0x08, // coolant temp
-    0x0C, // battery voltage
-    0x0D, // TPS voltage
-    0x04, // MAF voltage MSB
-    0x05, // MAF voltage LSB
-    0x17, // AAC valve %
-    0x14, // injection time MSB
-    0x15, // injection time LSB
-    0x16, // ignition timing
-    0x09, // LH O2 sensor voltage
-];
-
 pub fn init_sequence(ecu_address: u8) -> [u8; 3] {
     [0xFF, 0xFF, ecu_address]
 }
@@ -56,11 +38,13 @@ pub fn expected_init_reply(ecu_address: u8) -> u8 {
     !ecu_address
 }
 
-pub fn stream_command() -> Vec<u8> {
-    let mut cmd = Vec::with_capacity(STREAM_REGISTERS.len() * 2 + 1);
-    for reg in STREAM_REGISTERS {
+/// Build a stream request for the given registers (max 20 per the protocol).
+/// The ECU answers each frame with one byte per register in this same order.
+pub fn build_stream_command(registers: &[u8]) -> Vec<u8> {
+    let mut cmd = Vec::with_capacity(registers.len() * 2 + 1);
+    for reg in registers {
         cmd.push(CMD_READ_REGISTER);
-        cmd.push(reg);
+        cmd.push(*reg);
     }
     cmd.push(TERMINATOR);
     cmd
@@ -135,41 +119,6 @@ impl FrameParser {
             }
         }
     }
-}
-
-/// One decoded set of live sensor readings, in raw physical units
-/// (kph, deg C, volts) before unit/calibration conversion.
-#[derive(Clone, Copy)]
-pub struct Readings {
-    pub rpm: f64,
-    pub speed_kph: f64,
-    pub coolant_c: f64,
-    pub battery_v: f64,
-    pub tps_v: f64,
-    pub maf_v: f64,
-    pub aac_pct: f64,
-    pub inj_ms: f64,
-    pub timing_deg: f64,
-    pub o2_v: f64,
-}
-
-pub fn parse_readings(frame: &[u8]) -> Option<Readings> {
-    if frame.len() < STREAM_REGISTERS.len() {
-        return None;
-    }
-    let u16be = |i: usize| ((frame[i] as u16) << 8) | frame[i + 1] as u16;
-    Some(Readings {
-        rpm: u16be(0) as f64 * 12.5,
-        speed_kph: frame[2] as f64 * 2.0,
-        coolant_c: frame[3] as f64 - 50.0,
-        battery_v: frame[4] as f64 * 80.0 / 1000.0,
-        tps_v: frame[5] as f64 * 20.0 / 1000.0,
-        maf_v: u16be(6) as f64 * 5.0 / 1000.0,
-        aac_pct: frame[8] as f64 / 2.0,
-        inj_ms: u16be(9) as f64 / 100.0,
-        timing_deg: 110.0 - frame[11] as f64,
-        o2_v: frame[12] as f64 * 10.0 / 1000.0,
-    })
 }
 
 /// DTCs are reported as (code, engine-starts-since-last-occurrence) pairs.
