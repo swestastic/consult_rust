@@ -1,6 +1,6 @@
 [package]
 name = "consult-rust"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Cross-platform Nissan Consult (OBD-I) diagnostic tool"
 authors = ["Kyle Corbett"]
