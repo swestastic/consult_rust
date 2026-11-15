@@ -18,6 +18,7 @@ impl ConsultApp {
             ecu_address: c.ecu_address.clone(),
             items: c.display_items.clone(),
             status: String::new(),
+            about_open: false,
         };
     }
 
@@ -192,19 +193,39 @@ impl ConsultApp {
                 }
 
                 ui.add_space(12.0);
-                if ui.button("Save").clicked() {
-                    match self.apply_settings() {
-                        Ok(()) => {
-                            self.settings.status = format!("Saved to {CONFIG_FILE}.");
-                            self.status = "Settings saved.".into();
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        match self.apply_settings() {
+                            Ok(()) => {
+                                self.settings.status = format!("Saved to {CONFIG_FILE}.");
+                                self.status = "Settings saved.".into();
+                            }
+                            Err(e) => self.settings.status = e,
                         }
-                        Err(e) => self.settings.status = e,
                     }
-                }
+                    if ui.button("About").clicked() {
+                        self.settings.about_open = true;
+                    }
+                });
                 if !self.settings.status.is_empty() {
                     ui.label(&self.settings.status);
                 }
             });
+
+        let mut about_open = self.settings.about_open;
+        egui::Window::new("About")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut about_open)
+            .show(ui.ctx(), |ui| {
+                ui.label(egui::RichText::new(env!("CARGO_PKG_NAME")).strong());
+                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                ui.label(env!("CARGO_PKG_DESCRIPTION"));
+                ui.add_space(6.0);
+                ui.label(format!("Author: {}", env!("CARGO_PKG_AUTHORS")));
+            });
+        self.settings.about_open = about_open;
     }
 
     /// Parse the edit buffer into the live config and write it to disk.

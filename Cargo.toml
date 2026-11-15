@@ -3,6 +3,7 @@ name = "consult-rust"
 version = "1.0.0"
 edition = "2024"
 description = "Cross-platform Nissan Consult (OBD-I) diagnostic tool"
+authors = ["Kyle Corbett"]
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }

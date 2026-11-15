@@ -142,6 +142,8 @@ pub struct SettingsState {
     pub ecu_address: String,
     pub speed_unit: crate::config::SpeedUnit,
     pub temp_unit: crate::config::TempUnit,
+    /// Whether the About window is open.
+    pub about_open: bool,
     /// Selected display item ids (edits config.display_items on save).
     pub items: Vec<String>,
     pub status: String,
