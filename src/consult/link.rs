@@ -20,6 +20,12 @@ pub enum LinkCommand {
     ActivateSet(Vec<(u8, u8)>),
     /// Send STOP, which also cancels all active test commands.
     CancelActivations,
+    /// Clear the transient DTC set, then report codes as faults re-occur.
+    WatchTransientDtc,
+    StopTransientWatch,
+    /// Dump ROM/RAM bytes (0xC9), 8 per request. Emits RomChunk events.
+    RomDump { start: u16, len: u32 },
+    CancelRomDump,
     Raw(Vec<u8>),
     Shutdown,
 }
@@ -28,8 +34,11 @@ pub enum LinkEvent {
     Connected,
     StreamFrame(Vec<u8>),
     DtcReport(Vec<(u8, u8)>),
+    TransientDtc(Vec<(u8, u8)>),
     PartNumber(String),
     DtcCleared,
+    RomChunk { data: Vec<u8> },
+    RomDumpDone { cancelled: bool },
     RawLog(String),
     Error(String),
 }
@@ -85,6 +94,15 @@ impl Drop for LinkHandle {
 
 // ---------------------------------------------------------------- serial worker
 
+/// State of an in-progress ROM dump: next address, end address, and the
+/// in-flight chunk request (with resend count).
+struct RomDump {
+    next: u32,
+    end: u32,
+    awaiting_since: Option<Instant>,
+    retries: u8,
+}
+
 fn serial_worker(
     port_name: String,
     ecu_candidates: Vec<u8>,
@@ -116,6 +134,8 @@ fn serial_worker(
     // Active test commands latch on the ECU until a STOP (0x30) cancels
     // them, so we track whether a cancel is owed before closing.
     let mut activation_active = false;
+    let mut watching_transient = false;
+    let mut rom_dump: Option<RomDump> = None;
     let mut buf = [0u8; 512];
 
     loop {
@@ -123,7 +143,7 @@ fn serial_worker(
         loop {
             match cmd_rx.try_recv() {
                 Ok(LinkCommand::Shutdown) => {
-                    if streaming || activation_active {
+                    if streaming || activation_active || watching_transient || rom_dump.is_some() {
                         stop_and_drain(&mut *port, &mut parser);
                     }
                     return;
@@ -174,6 +194,57 @@ fn serial_worker(
                         ));
                     }
                 }
+                Ok(LinkCommand::WatchTransientDtc) => {
+                    if streaming {
+                        stop_and_drain(&mut *port, &mut parser);
+                        streaming = false;
+                    }
+                    let bytes = [CMD_TRANSIENT_DTC, TERMINATOR];
+                    let _ = port.clear(serialport::ClearBuffer::Input);
+                    let _ = port.write_all(&bytes);
+                    let _ = port.flush();
+                    watching_transient = true;
+                    let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
+                }
+                Ok(LinkCommand::StopTransientWatch) => {
+                    if watching_transient {
+                        stop_and_drain(&mut *port, &mut parser);
+                        watching_transient = false;
+                        let _ = evt.send(LinkEvent::RawLog(
+                            "TX: 30 (transient watch stopped)".into(),
+                        ));
+                    }
+                }
+                Ok(LinkCommand::RomDump { start, len }) => {
+                    if rom_dump.is_none() {
+                        if streaming {
+                            stop_and_drain(&mut *port, &mut parser);
+                            streaming = false;
+                        }
+                        rom_dump = Some(RomDump {
+                            next: start as u32,
+                            end: start as u32 + len,
+                            awaiting_since: None,
+                            retries: 0,
+                        });
+                        let _ = evt.send(LinkEvent::RawLog(format!(
+                            "ROM dump started: 0x{start:04X}, 0x{len:X} bytes"
+                        )));
+                    }
+                }
+                Ok(LinkCommand::CancelRomDump) => {
+                    if rom_dump.take().is_some() {
+                        stop_and_drain(&mut *port, &mut parser);
+                        let _ = evt.send(LinkEvent::RomDumpDone { cancelled: true });
+                    }
+                }
+                // While a dump or watch owns the ECU, drop other queries
+                // instead of letting them clobber the in-flight operation.
+                Ok(_) if rom_dump.is_some() || watching_transient => {
+                    let _ = evt.send(LinkEvent::RawLog(
+                        "Busy: ROM dump / transient watch in progress, command dropped".into(),
+                    ));
+                }
                 Ok(cmd) => {
                     if streaming {
                         stop_and_drain(&mut *port, &mut parser);
@@ -189,19 +260,82 @@ fn serial_worker(
             }
         }
 
+        // Drive the ROM dump state machine: one chunk request at a time.
+        if let Some(dump) = &mut rom_dump {
+            match dump.awaiting_since {
+                None if dump.next < dump.end => {
+                    let n = ((dump.end - dump.next).min(ROM_CHUNK as u32)) as u8;
+                    let req = build_rom_request(dump.next as u16, n);
+                    let _ = port.clear(serialport::ClearBuffer::Input);
+                    let _ = port.write_all(&req);
+                    let _ = port.flush();
+                    dump.awaiting_since = Some(Instant::now());
+                }
+                Some(since) if since.elapsed() > Duration::from_millis(800) => {
+                    dump.retries += 1;
+                    if dump.retries > 3 {
+                        rom_dump = None;
+                        let _ = port.write_all(&[STOP]);
+                        let _ = port.flush();
+                        let _ = evt.send(LinkEvent::RawLog(
+                            "ROM dump failed: no response from ECU".into(),
+                        ));
+                        let _ = evt.send(LinkEvent::RomDumpDone { cancelled: true });
+                    } else {
+                        dump.awaiting_since = None; // resend this chunk
+                    }
+                }
+                _ => {}
+            }
+        }
+
         match port.read(&mut buf) {
             Ok(n) => {
                 for &b in &buf[..n] {
                     match parser.feed(b) {
                         Some(ParserOutput::Frame(frame)) => {
-                            let is_stream = frame.len() == stream_regs.len();
-                            let out = if streaming && is_stream {
-                                LinkEvent::StreamFrame(frame)
+                            // A ROM dump in flight claims matching frames.
+                            let mut claimed = false;
+                            if let Some(dump) = &mut rom_dump
+                                && dump.awaiting_since.is_some()
+                            {
+                                let expected =
+                                    ((dump.end - dump.next).min(ROM_CHUNK as u32)) as usize;
+                                if frame.len() == expected {
+                                    dump.next += frame.len() as u32;
+                                    dump.awaiting_since = None;
+                                    dump.retries = 0;
+                                    let _ = evt.send(LinkEvent::RomChunk {
+                                        data: frame.clone(),
+                                    });
+                                    // Stop the repeated chunk response.
+                                    let _ = port.write_all(&[STOP]);
+                                    let _ = port.flush();
+                                    claimed = true;
+                                }
+                            }
+                            if claimed {
+                                if rom_dump.as_ref().is_some_and(|d| d.next >= d.end) {
+                                    rom_dump = None;
+                                    let _ = evt.send(LinkEvent::RomDumpDone { cancelled: false });
+                                }
+                            } else if watching_transient {
+                                let pairs = parse_dtc_frames(std::slice::from_ref(&frame));
+                                if !pairs.is_empty()
+                                    && evt.send(LinkEvent::TransientDtc(pairs)).is_err()
+                                {
+                                    return;
+                                }
                             } else {
-                                LinkEvent::RawLog(format!("RX: {}", to_hex(&frame)))
-                            };
-                            if evt.send(out).is_err() {
-                                return;
+                                let is_stream = frame.len() == stream_regs.len();
+                                let out = if streaming && is_stream {
+                                    LinkEvent::StreamFrame(frame)
+                                } else {
+                                    LinkEvent::RawLog(format!("RX: {}", to_hex(&frame)))
+                                };
+                                if evt.send(out).is_err() {
+                                    return;
+                                }
                             }
                         }
                         Some(ParserOutput::StopAck) => {}
@@ -425,6 +559,39 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                     let _ = evt.send(LinkEvent::RawLog(
                         "Sim TX: 30 (active tests cancelled)".into(),
                     ));
+                }
+                LinkCommand::WatchTransientDtc => {
+                    std::thread::sleep(Duration::from_millis(300));
+                    let _ = evt.send(LinkEvent::RawLog("Sim TX: 51 F0".into()));
+                    let _ = evt.send(LinkEvent::TransientDtc(vec![(0x12, 0x00)]));
+                }
+                LinkCommand::StopTransientWatch => {
+                    let _ = evt
+                        .send(LinkEvent::RawLog("Sim TX: 30 (transient watch stopped)".into()));
+                }
+                LinkCommand::RomDump { start, len } => {
+                    let total = len.min(64);
+                    let mut off = 0;
+                    while off < total {
+                        let n = (total - off).min(ROM_CHUNK as u32) as usize;
+                        let data: Vec<u8> = (0..n)
+                            .map(|i| (start as usize + off as usize + i) as u8)
+                            .collect();
+                        std::thread::sleep(Duration::from_millis(30));
+                        if evt
+                            .send(LinkEvent::RomChunk {
+                                data,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        off += n as u32;
+                    }
+                    let _ = evt.send(LinkEvent::RomDumpDone { cancelled: false });
+                }
+                LinkCommand::CancelRomDump => {
+                    let _ = evt.send(LinkEvent::RomDumpDone { cancelled: true });
                 }
                 LinkCommand::Raw(b) => {
                     let _ = evt.send(LinkEvent::RawLog(format!("Sim TX: {}", to_hex(&b))));

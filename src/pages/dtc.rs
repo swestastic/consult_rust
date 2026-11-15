@@ -13,7 +13,7 @@ impl ConsultApp {
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let busy = self.dtc.busy;
+            let busy = self.dtc.busy || self.dtc.watching;
             if ui
                 .add_enabled(!busy, egui::Button::new("Read DTCs"))
                 .clicked()
@@ -75,6 +75,56 @@ impl ConsultApp {
                             } else {
                                 starts.to_string()
                             });
+                            ui.end_row();
+                        }
+                    });
+            }
+        });
+
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(egui::RichText::new("Transient DTC watch").strong());
+            ui.label(
+                "Clears the transient DTC set (command 0x51), then reports codes as faults \
+                 re-occur — e.g. while wiggling a suspect connector.",
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if self.dtc.watching {
+                    if ui.button("Stop watch").clicked() {
+                        self.send(LinkCommand::StopTransientWatch);
+                        self.dtc.watching = false;
+                        self.dtc.status = "Transient watch stopped.".into();
+                    }
+                    ui.add(egui::Spinner::new());
+                    ui.label("Watching...");
+                } else if ui
+                    .add_enabled(!self.dtc.busy, egui::Button::new("Start watch"))
+                    .clicked()
+                {
+                    self.send(LinkCommand::WatchTransientDtc);
+                    self.dtc.watching = true;
+                    self.dtc.transient.clear();
+                    self.dtc.status = "Watching for transient codes...".into();
+                }
+            });
+            if !self.dtc.transient.is_empty() {
+                ui.add_space(4.0);
+                egui::Grid::new("transient_grid")
+                    .num_columns(4)
+                    .spacing([20.0, 6.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Code").strong());
+                        ui.label(egui::RichText::new("Description").strong());
+                        ui.label(egui::RichText::new("Starts since").strong());
+                        ui.label(egui::RichText::new("First seen").strong());
+                        ui.end_row();
+                        for (code, starts, ts) in &self.dtc.transient {
+                            ui.label(format!("{code:02X}"));
+                            ui.label(dtc_description(*code));
+                            ui.label(starts.to_string());
+                            ui.label(ts);
                             ui.end_row();
                         }
                     });

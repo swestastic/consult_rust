@@ -25,6 +25,10 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
   play/pause/speed/scrub controls, and inspect channels on a time-series plot
   (works without an ECU connection)
 - DTC read/erase with code descriptions, ECU part number readout
+- Transient DTC watch (0x51): clears the transient code set, then reports
+  codes as faults re-occur — useful for wiggle-testing connectors
+- ROM dump (0xC9): read ECU memory 8 bytes per request to a `.bin` file in
+  `dumps/`, with progress and cancel
 - Active tests: fuel pump relay, power balance (per-cylinder cut), coolant temp
   bias, fuel trim, timing adjust, AAC adjust, IACV opening, clear self-learn,
   plus on/off overrides for the FICD/P-Reg/AAC-V/timing/MAP-SW solenoids and
@@ -48,6 +52,8 @@ Implemented from the documentation in `PyConsult/Documentation/`:
 - DTC read `D1`, clear `C1`, ECU part number `D0`
 - Register streaming: `5A <reg>` pairs + `F0` (max 20 registers)
 - Active tests: `0A <type> <data> F0`
+- Transient DTC watch: `51 F0` clears the transient set, then the ECU reports
+  codes as they re-occur; `C9 <hi> <lo>` (max 8 per request) reads ROM/RAM
 
 RPM and injector pulse are read as proper 16-bit MSB/LSB pairs (the Python
 prototype read only the LSB, which saturates above ~3200 RPM). Vehicle speed

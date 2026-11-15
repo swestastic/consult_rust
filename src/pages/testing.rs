@@ -35,9 +35,26 @@ impl ConsultApp {
 
                 ui.columns(2, |cols| {
                     show_controls(self, &mut cols[0]);
+                    show_romdump(self, &mut cols[1]);
                     show_raw(self, &mut cols[1]);
                 });
             });
+    }
+
+    /// Create the dump file and mark the dump active; the caller then
+    /// sends LinkCommand::RomDump.
+    fn start_rom_dump_file(&mut self, start: u16, len: u32) -> Result<(), String> {
+        std::fs::create_dir_all("dumps").map_err(|e| format!("Cannot create dumps dir: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let name = format!("dumps/romdump_{start:04X}_{len:X}_{stamp}.bin");
+        let file =
+            std::fs::File::create(&name).map_err(|e| format!("Cannot create {name}: {e}"))?;
+        self.romdump.writer = Some(std::io::BufWriter::new(file));
+        self.romdump.file_name = Some(name);
+        self.romdump.active = true;
+        self.romdump.total = len;
+        self.romdump.done = 0;
+        Ok(())
     }
 
     fn send_activation(&mut self, kind: u8, data: u8) {
@@ -135,6 +152,62 @@ fn fmt_opt(v: Option<f64>, decimals: usize, unit: &str) -> String {
         Some(v) => format!("{v:.decimals$} {unit}"),
         None => "--".into(),
     }
+}
+
+/// ROM dump controls (0xC9): address range in, progress, cancel.
+fn show_romdump(app: &mut ConsultApp, ui: &mut egui::Ui) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(RichText::new("ROM dump").strong());
+
+        if app.romdump.active {
+            let frac = if app.romdump.total > 0 {
+                app.romdump.done as f32 / app.romdump.total as f32
+            } else {
+                0.0
+            };
+            ui.add(
+                egui::ProgressBar::new(frac)
+                    .text(format!("0x{:X} / 0x{:X} bytes", app.romdump.done, app.romdump.total)),
+            );
+            if let Some(name) = &app.romdump.file_name {
+                ui.label(format!("Writing {name}"));
+            }
+            if ui.button("Cancel dump").clicked() {
+                app.send(LinkCommand::CancelRomDump);
+            }
+            return;
+        }
+
+        ui.label("Reads ECU memory 8 bytes per request; a full 32 KB dump takes a few minutes.");
+        ui.horizontal(|ui| {
+            ui.label("Start (hex):");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.romdump.start_text).desired_width(60.0),
+            );
+            ui.label("Length (hex):");
+            ui.add(egui::TextEdit::singleline(&mut app.romdump.len_text).desired_width(60.0));
+        });
+        if ui
+            .button("Start dump")
+            .on_hover_text("ROM space is 0x8000-0xFFFF; RAM below. Output goes to dumps/.")
+            .clicked()
+        {
+            let range =
+                protocol::parse_rom_range(&app.romdump.start_text, &app.romdump.len_text);
+            match range {
+                Ok((start, len)) => match app.start_rom_dump_file(start, len) {
+                    Ok(()) => {
+                        app.send(LinkCommand::RomDump { start, len });
+                        app.testing
+                            .push_log(format!("ROM dump started: 0x{start:04X} +0x{len:X}"));
+                    }
+                    Err(e) => app.testing.push_log(e),
+                },
+                Err(e) => app.testing.push_log(e),
+            }
+        }
+    });
+    ui.add_space(6.0);
 }
 
 /// ON/OFF button pair for a solenoid/relay activation (0x01 = on, 0x00 = off).

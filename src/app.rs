@@ -42,6 +42,10 @@ pub enum ConnState {
 pub struct DtcState {
     pub entries: Vec<(u8, u8)>,
     pub part_number: Option<String>,
+    /// Transient-DTC watch (0x51): active flag and codes seen, as
+    /// (code, starts, first-seen time) rows.
+    pub watching: bool,
+    pub transient: Vec<(u8, u8, String)>,
     pub busy: bool,
     pub status: String,
 }
@@ -51,8 +55,35 @@ impl Default for DtcState {
         DtcState {
             entries: Vec::new(),
             part_number: None,
+            watching: false,
+            transient: Vec::new(),
             busy: false,
             status: "Ready".into(),
+        }
+    }
+}
+
+/// ROM dump (0xC9) progress and the file being written.
+pub struct RomDumpState {
+    pub active: bool,
+    pub total: u32,
+    pub done: u32,
+    pub start_text: String,
+    pub len_text: String,
+    pub file_name: Option<String>,
+    pub writer: Option<std::io::BufWriter<std::fs::File>>,
+}
+
+impl Default for RomDumpState {
+    fn default() -> Self {
+        RomDumpState {
+            active: false,
+            total: 0,
+            done: 0,
+            start_text: "8000".into(),
+            len_text: "8000".into(),
+            file_name: None,
+            writer: None,
         }
     }
 }
@@ -158,6 +189,7 @@ pub struct ConsultApp {
     pub logger: DataLogger,
     pub dtc: DtcState,
     pub testing: TestingState,
+    pub romdump: RomDumpState,
     pub settings: SettingsState,
     pub replay: ReplayState,
     /// Per-item session peak (max) values, keyed by catalog id. Cleared on
@@ -264,6 +296,7 @@ impl ConsultApp {
             logger: DataLogger::new(),
             dtc: DtcState::default(),
             testing: TestingState::default(),
+            romdump: RomDumpState::default(),
             settings: SettingsState::default(),
             replay: ReplayState::default(),
             peaks: std::collections::HashMap::new(),
@@ -413,10 +446,18 @@ impl ConsultApp {
         // The Testing page runs its own small stream for the adjustment
         // readouts; stop it when leaving.
         if self.page == Page::Testing && self.connected() {
+            if self.romdump.active {
+                self.send(LinkCommand::CancelRomDump);
+            }
             // The STOP also cancels any latched active tests.
             self.send(LinkCommand::StopStream);
             self.frame = None;
             self.testing.base_idle_active = false;
+        }
+        // Stop the transient-DTC watch when leaving the DTC page.
+        if self.page == Page::Dtc && self.dtc.watching {
+            self.send(LinkCommand::StopTransientWatch);
+            self.dtc.watching = false;
         }
         if page == Page::DataStream && self.connected() && !self.streaming {
             let regs = self.config.stream_registers();
@@ -514,6 +555,45 @@ impl ConsultApp {
                         self.dtc.status = format!("{} code(s) reported.", entries.len());
                     }
                     self.dtc.entries = entries;
+                }
+                LinkEvent::TransientDtc(pairs) => {
+                    for (code, starts) in pairs {
+                        if !self.dtc.transient.iter().any(|(c, _, _)| *c == code) {
+                            let ts = chrono::Local::now().format("%H:%M:%S").to_string();
+                            self.dtc.transient.push((code, starts, ts));
+                            self.dtc.status = format!("Transient code 0x{code:02X} seen.");
+                        }
+                    }
+                }
+                LinkEvent::RomChunk { data, .. } => {
+                    if let Some(w) = self.romdump.writer.as_mut() {
+                        use std::io::Write;
+                        let _ = w.write_all(&data);
+                    }
+                    self.romdump.done += data.len() as u32;
+                }
+                LinkEvent::RomDumpDone { cancelled } => {
+                    use std::io::Write;
+                    if let Some(mut w) = self.romdump.writer.take() {
+                        let _ = w.flush();
+                    }
+                    self.romdump.active = false;
+                    let name = self.romdump.file_name.clone().unwrap_or_default();
+                    self.status = if cancelled {
+                        format!(
+                            "ROM dump stopped; {} of 0x{:X} bytes written to {name}.",
+                            self.romdump.done, self.romdump.total
+                        )
+                    } else {
+                        format!("ROM dump complete: {name}.")
+                    };
+                    self.testing.push_log(self.status.clone());
+                    // Restore the Testing page's readout stream.
+                    if self.page == Page::Testing && self.connected() {
+                        self.send(LinkCommand::StartStream(
+                            crate::pages::testing::HELPER_REGS.to_vec(),
+                        ));
+                    }
                 }
                 LinkEvent::DtcCleared => {
                     self.dtc.busy = false;

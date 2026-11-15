@@ -13,9 +13,15 @@ pub const FRAME_START: u8 = 0xFF;
 
 pub const CMD_READ_DTC: u8 = 0xD1;
 pub const CMD_CLEAR_DTC: u8 = 0xC1;
+/// Clears the transient DTC set, then reports codes as faults re-occur.
+pub const CMD_TRANSIENT_DTC: u8 = 0x51;
 pub const CMD_ECU_INFO: u8 = 0xD0;
 pub const CMD_READ_REGISTER: u8 = 0x5A;
 pub const CMD_ACTIVATE: u8 = 0x0A;
+/// Reads internal ROM/RAM bytes, up to 8 per request.
+pub const CMD_READ_ROM: u8 = 0xC9;
+/// Max bytes per ROM read request.
+pub const ROM_CHUNK: u8 = 8;
 
 /// Active-test ("activation") command type bytes, used as `0x0A <kind> <data> 0xF0`.
 pub mod activate {
@@ -60,6 +66,43 @@ pub fn build_stream_command(registers: &[u8]) -> Vec<u8> {
 
 pub fn activation_command(kind: u8, data: u8) -> [u8; 4] {
     [CMD_ACTIVATE, kind, data, TERMINATOR]
+}
+
+/// Build a ROM read request for `n` consecutive bytes starting at `addr`
+/// (n <= 8). Response is one frame with the n data bytes, repeated until
+/// stopped like any other query.
+pub fn build_rom_request(addr: u16, n: u8) -> Vec<u8> {
+    let mut cmd = Vec::with_capacity(n as usize * 3 + 1);
+    for i in 0..n {
+        let a = addr.wrapping_add(i as u16);
+        cmd.extend_from_slice(&[CMD_READ_ROM, (a >> 8) as u8, a as u8]);
+    }
+    cmd.push(TERMINATOR);
+    cmd
+}
+
+/// Parse and validate a ROM dump range from hex text fields.
+/// Address space is 16-bit (ROM 0x8000-0xFFFF; RAM below, per the docs).
+pub fn parse_rom_range(start: &str, len: &str) -> Result<(u16, u32), String> {
+    let parse = |name: &str, v: &str| -> Result<u32, String> {
+        let t = v
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        u32::from_str_radix(t, 16).map_err(|_| format!("{name}: \"{v}\" is not hex"))
+    };
+    let start = parse("Start address", start)?;
+    let len = parse("Length", len)?;
+    if start > 0xFFFF {
+        return Err("Start address is 16-bit (0000-FFFF)".into());
+    }
+    if len == 0 {
+        return Err("Length must be non-zero".into());
+    }
+    if start + len > 0x10000 {
+        return Err("Start + length runs past 0xFFFF".into());
+    }
+    Ok((start as u16, len))
 }
 
 /// Incremental parser for ECU response frames.
@@ -316,5 +359,24 @@ mod tests {
 
         // No printable content at all.
         assert_eq!(format_part_number(&[0x01, 0x02]), "(no response)");
+    }
+
+    #[test]
+    fn rom_request_builds() {
+        // 3 bytes at 0x8000: C9 80 00 C9 80 01 C9 80 02 F0
+        assert_eq!(
+            build_rom_request(0x8000, 3),
+            vec![0xC9, 0x80, 0x00, 0xC9, 0x80, 0x01, 0xC9, 0x80, 0x02, 0xF0]
+        );
+    }
+
+    #[test]
+    fn rom_range_validates() {
+        assert_eq!(parse_rom_range("8000", "8000").unwrap(), (0x8000, 0x8000));
+        assert_eq!(parse_rom_range("0x8000", "100").unwrap(), (0x8000, 0x100));
+        assert!(parse_rom_range("8000", "8001").is_err()); // runs past 0xFFFF
+        assert!(parse_rom_range("8000", "0").is_err());
+        assert!(parse_rom_range("10000", "10").is_err());
+        assert!(parse_rom_range("xyz", "10").is_err());
     }
 }
