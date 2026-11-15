@@ -1,5 +1,7 @@
 # Consult Rust
 
+[![Build](https://github.com/swestastic/consult_rust/actions/workflows/build.yml/badge.svg)](https://github.com/swestastic/consult_rust/actions/workflows/build.yml)
+
 A cross-platform Nissan Consult (14-pin, pre-OBD-II) diagnostic tool, rewritten in
 Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissans
 (240sx, 300zx, Skyline, Laurel, ...) through a USB Consult cable.
