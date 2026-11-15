@@ -122,7 +122,8 @@ impl ConsultApp {
                     for (i, spec) in catalog::CATALOG.iter().enumerate() {
                         let mut on = s.items.iter().any(|id| id == spec.id);
                         let text = format!("{} ({})", spec.label, spec.regs_display());
-                        if ui.checkbox(&mut on, text).changed() {
+                        let resp = ui.checkbox(&mut on, text);
+                        if resp.changed() {
                             if on {
                                 let would = used + spec.regs.len();
                                 if would > catalog::MAX_STREAM_REGISTERS {
@@ -138,6 +139,7 @@ impl ConsultApp {
                                 s.items.retain(|id| id != spec.id);
                             }
                         }
+                        resp.on_hover_ui(|ui| spec_hover(ui, spec, s.speed_unit, s.temp_unit));
                         if i % 3 == 2 {
                             ui.end_row();
                         }
@@ -218,4 +220,44 @@ impl ConsultApp {
 fn fmt(v: f64) -> String {
     let s = format!("{v:.3}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Hover card for a Displayed-items checkbox: description, decoded range in
+/// the selected units, and typical readings. Digital registers list their
+/// named bits instead.
+fn spec_hover(
+    ui: &mut egui::Ui,
+    spec: &catalog::SensorSpec,
+    speed_unit: SpeedUnit,
+    temp_unit: TempUnit,
+) {
+    use egui::RichText;
+    ui.set_max_width(300.0);
+    ui.label(RichText::new(format!("{} — {}", spec.label, spec.regs_display())).strong());
+    ui.label(spec.desc);
+    ui.add_space(4.0);
+
+    if spec.unit == catalog::UnitKind::Raw {
+        ui.label(RichText::new("Bits:").strong());
+        let mut any = false;
+        for bit in (0..8).rev() {
+            if let Some(name) = catalog::digital_bit_name(spec.id, bit) {
+                ui.label(format!("  b{bit}: {name}"));
+                any = true;
+            }
+        }
+        if !any {
+            ui.label("  (no named bits)");
+        }
+        return;
+    }
+
+    let (lo, hi) = spec.range_in(speed_unit.label(), temp_unit.label());
+    ui.label(format!(
+        "Range: {} – {} {}",
+        fmt(lo),
+        fmt(hi),
+        spec.unit_in(speed_unit.label(), temp_unit.label())
+    ));
+    ui.label(format!("Typical: {}", spec.typical));
 }
