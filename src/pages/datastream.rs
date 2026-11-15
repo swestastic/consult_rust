@@ -82,6 +82,24 @@ impl ConsultApp {
                 {
                     self.peaks.clear();
                 }
+
+                if self.streaming {
+                    ui.separator();
+                    let fps = self.stream_fps();
+                    let color = if fps >= 8.0 {
+                        Color32::from_rgb(80, 220, 100)
+                    } else if fps >= 4.0 {
+                        Color32::from_rgb(230, 200, 60)
+                    } else {
+                        Color32::from_rgb(255, 90, 90)
+                    };
+                    ui.label(
+                        RichText::new(format!("{fps:.1} fps"))
+                            .color(color)
+                            .size(11.0),
+                    )
+                    .on_hover_text("Stream frame rate over the last 2 s");
+                }
             });
         });
 

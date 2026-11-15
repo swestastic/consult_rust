@@ -137,6 +137,8 @@ pub struct ConsultApp {
     pub streaming: bool,
     pub frame: Option<Vec<u8>>,
     pub frame_seq: u64,
+    /// Arrival times of recent stream frames, for the health readout.
+    pub frame_times: VecDeque<Instant>,
     pub last_logged_seq: u64,
     pub logger: DataLogger,
     pub dtc: DtcState,
@@ -234,6 +236,7 @@ impl ConsultApp {
             streaming: false,
             frame: None,
             frame_seq: 0,
+            frame_times: VecDeque::new(),
             last_logged_seq: 0,
             logger: DataLogger::new(),
             dtc: DtcState::default(),
@@ -263,6 +266,11 @@ impl ConsultApp {
 
     pub fn test_mode(&self) -> bool {
         self.link.as_ref().is_some_and(|l| l.test_mode)
+    }
+
+    /// Stream frames per second over the trailing 2 s window.
+    pub fn stream_fps(&self) -> f64 {
+        self.frame_times.len() as f64 / 2.0
     }
 
     pub fn send(&self, cmd: LinkCommand) {
@@ -454,6 +462,15 @@ impl ConsultApp {
                 LinkEvent::StreamFrame(f) => {
                     self.frame = Some(f);
                     self.frame_seq += 1;
+                    let now = Instant::now();
+                    self.frame_times.push_back(now);
+                    while self
+                        .frame_times
+                        .front()
+                        .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(2))
+                    {
+                        self.frame_times.pop_front();
+                    }
                 }
                 LinkEvent::DtcReport(entries) => {
                     self.dtc.busy = false;
