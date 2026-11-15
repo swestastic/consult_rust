@@ -175,6 +175,8 @@ pub struct ReplayState {
     /// One toggle per column of the loaded log.
     pub channels: Vec<bool>,
     pub normalize: bool,
+    /// Two-click confirm state for deleting the selected log file.
+    pub confirm_delete: bool,
     pub status: String,
 }
 
@@ -190,6 +192,7 @@ impl Default for ReplayState {
             last_tick: Instant::now(),
             channels: Vec::new(),
             normalize: false,
+            confirm_delete: false,
             status: String::new(),
         }
     }

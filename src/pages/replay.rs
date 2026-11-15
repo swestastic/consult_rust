@@ -11,12 +11,33 @@ use crate::logfile::LogFile;
 use crate::widgets::{self, SERIES_COLORS, Series};
 
 impl ConsultApp {
+    /// Load a CSV log into the replay state, shared by the logs-dir picker
+    /// and the open-anywhere file dialog.
+    fn load_replay_file(&mut self, path: &std::path::Path) {
+        match LogFile::load(path) {
+            Ok(log) => {
+                self.replay.status =
+                    format!("{}: {} rows, {:.1} s", log.name, log.rows.len(), log.duration());
+                self.replay.t = 0.0;
+                self.replay.playing = false;
+                // Default: plot the first two columns.
+                self.replay.channels = (0..log.columns.len()).map(|i| i < 2).collect();
+                self.replay.log = Some(log);
+            }
+            Err(e) => {
+                self.replay.status = e;
+                self.replay.log = None;
+            }
+        }
+    }
+
     pub(crate) fn show_replay(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
 
         // ---- File selection row
         ui.horizontal(|ui| {
             ui.label("Log file:");
+            let prev_selection = self.replay.selected_file.clone();
             let selected = self
                 .replay
                 .selected_file
@@ -34,6 +55,9 @@ impl ConsultApp {
                         );
                     }
                 });
+            if self.replay.selected_file != prev_selection {
+                self.replay.confirm_delete = false;
+            }
             if ui.button("Refresh").clicked() {
                 self.refresh_log_files();
             }
@@ -48,6 +72,16 @@ impl ConsultApp {
                 }
             }
             if ui
+                .button("Open...")
+                .on_hover_text("Load a CSV log from any folder")
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("CSV logs", &["csv"])
+                    .pick_file()
+            {
+                self.load_replay_file(&path);
+            }
+            if ui
                 .add_enabled(
                     self.replay.selected_file.is_some(),
                     egui::Button::new("Load"),
@@ -56,24 +90,32 @@ impl ConsultApp {
                 && let Some(name) = self.replay.selected_file.clone()
             {
                 let path = std::path::Path::new("logs").join(&name);
-                match LogFile::load(&path) {
-                    Ok(log) => {
-                        self.replay.status = format!(
-                            "{}: {} rows, {:.1} s",
-                            log.name,
-                            log.rows.len(),
-                            log.duration()
-                        );
-                        self.replay.t = 0.0;
-                        self.replay.playing = false;
-                        // Default: plot the first two columns.
-                        self.replay.channels = (0..log.columns.len()).map(|i| i < 2).collect();
-                        self.replay.log = Some(log);
+                self.load_replay_file(&path);
+            }
+            // Delete is a two-click confirm.
+            let can_delete = self.replay.selected_file.is_some();
+            let delete_text = if self.replay.confirm_delete {
+                "Confirm delete?"
+            } else {
+                "Delete"
+            };
+            if ui
+                .add_enabled(can_delete, egui::Button::new(delete_text))
+                .on_hover_text("Delete the selected log file")
+                .clicked()
+            {
+                if self.replay.confirm_delete {
+                    if let Some(name) = self.replay.selected_file.clone() {
+                        let path = std::path::Path::new("logs").join(&name);
+                        self.replay.status = match std::fs::remove_file(&path) {
+                            Ok(()) => format!("Deleted {name}."),
+                            Err(e) => format!("Cannot delete {name}: {e}"),
+                        };
+                        self.refresh_log_files();
                     }
-                    Err(e) => {
-                        self.replay.status = e;
-                        self.replay.log = None;
-                    }
+                    self.replay.confirm_delete = false;
+                } else {
+                    self.replay.confirm_delete = true;
                 }
             }
             ui.separator();
