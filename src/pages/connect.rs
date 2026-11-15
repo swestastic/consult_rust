@@ -20,18 +20,23 @@ impl ConsultApp {
             .show(ui, |ui| {
                 ui.label("Port:");
                 ui.horizontal(|ui| {
-                    let mut choices = vec![TEST_MODE_LABEL.to_string()];
-                    choices.extend(self.ports.iter().cloned());
+                    let mut choices: Vec<(String, Option<String>)> =
+                        vec![(TEST_MODE_LABEL.to_string(), None)];
+                    choices.extend(
+                        self.ports
+                            .iter()
+                            .map(|p| (p.name.clone(), p.description.clone())),
+                    );
                     egui::ComboBox::from_id_salt("port_combo")
                         .selected_text(self.selected_port.as_str())
                         .width(260.0)
                         .show_ui(ui, |ui| {
-                            for choice in choices {
-                                ui.selectable_value(
-                                    &mut self.selected_port,
-                                    choice.clone(),
-                                    choice,
-                                );
+                            for (name, desc) in choices {
+                                let text = match &desc {
+                                    Some(d) => format!("{name} — {d}"),
+                                    None => name.clone(),
+                                };
+                                ui.selectable_value(&mut self.selected_port, name, text);
                             }
                         });
                     if ui.button("Refresh").clicked() {

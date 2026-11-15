@@ -13,6 +13,12 @@ use crate::logging::DataLogger;
 pub const TEST_MODE_LABEL: &str = "Test Mode (Simulated Data)";
 pub const REPLAY_SPEEDS: [f32; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
 
+/// A detected serial port, with a USB description when available.
+pub struct PortInfo {
+    pub name: String,
+    pub description: Option<String>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Connect,
@@ -115,9 +121,12 @@ pub struct ConsultApp {
     pub conn: ConnState,
     pub connecting_since: Option<Instant>,
     pub status: String,
-    pub ports: Vec<String>,
+    pub ports: Vec<PortInfo>,
     pub last_port_scan: Instant,
     pub selected_port: String,
+    /// Set once a lone detected port has been auto-selected, so we don't
+    /// keep overriding a deliberate user choice.
+    pub port_autoselected: bool,
     pub streaming: bool,
     pub frame: Option<Vec<u8>>,
     pub frame_seq: u64,
@@ -212,6 +221,7 @@ impl ConsultApp {
             ports: Vec::new(),
             last_port_scan: Instant::now() - Duration::from_secs(10),
             selected_port: TEST_MODE_LABEL.into(),
+            port_autoselected: false,
             streaming: false,
             frame: None,
             frame_seq: 0,
@@ -254,14 +264,40 @@ impl ConsultApp {
 
     pub fn refresh_ports(&mut self) {
         self.ports = serialport::available_ports()
-            .map(|list| list.into_iter().map(|p| p.port_name).collect())
+            .map(|list| {
+                list.into_iter()
+                    .map(|p| {
+                        let description = match p.port_type {
+                            serialport::SerialPortType::UsbPort(u) => {
+                                u.product.or(u.manufacturer)
+                            }
+                            serialport::SerialPortType::BluetoothPort => {
+                                Some("Bluetooth".into())
+                            }
+                            _ => None,
+                        };
+                        PortInfo {
+                            name: p.port_name,
+                            description,
+                        }
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         self.last_port_scan = Instant::now();
         if self.selected_port != TEST_MODE_LABEL
-            && !self.ports.contains(&self.selected_port)
+            && !self.ports.iter().any(|p| p.name == self.selected_port)
             && let Some(first) = self.ports.first()
         {
-            self.selected_port = first.clone();
+            self.selected_port = first.name.clone();
+        }
+        // Auto-select the adapter when exactly one port is present.
+        if !self.port_autoselected
+            && self.selected_port == TEST_MODE_LABEL
+            && self.ports.len() == 1
+        {
+            self.selected_port = self.ports[0].name.clone();
+            self.port_autoselected = true;
         }
     }
 
