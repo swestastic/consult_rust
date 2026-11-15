@@ -67,6 +67,8 @@ pub struct Config {
     pub battery_low_v: f64,
     /// ECU init address as hex text, e.g. "EF" (some '96+ ECUs use "ED").
     pub ecu_address: String,
+    /// Last serial port that connected successfully, restored on launch.
+    pub last_port: Option<String>,
     /// Selected data-stream items (catalog ids), user-editable in Settings.
     pub display_items: Vec<String>,
 }
@@ -92,6 +94,7 @@ impl Default for Config {
             coolant_warning_c: 93.5,
             battery_low_v: 12.0,
             ecu_address: "EF".into(),
+            last_port: None,
             display_items: crate::catalog::DEFAULT_SELECTION
                 .iter()
                 .map(|s| s.to_string())

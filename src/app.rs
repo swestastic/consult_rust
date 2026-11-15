@@ -219,6 +219,7 @@ impl ConsultApp {
     pub fn new() -> Self {
         let (evt_tx, evt_rx) = std::sync::mpsc::channel();
         let config = Config::load();
+        let restored_port = config.last_port.clone();
         let mut app = ConsultApp {
             config,
             page: Page::Connect,
@@ -230,7 +231,7 @@ impl ConsultApp {
             status: "Select a port and connect.".into(),
             ports: Vec::new(),
             last_port_scan: Instant::now() - Duration::from_secs(10),
-            selected_port: TEST_MODE_LABEL.into(),
+            selected_port: restored_port.unwrap_or_else(|| TEST_MODE_LABEL.into()),
             port_autoselected: false,
             reconnect_attempts: 0,
             reconnect_at: None,
@@ -449,6 +450,13 @@ impl ConsultApp {
                     self.reconnect_attempts = 0;
                     self.reconnect_at = None;
                     self.peaks.clear();
+                    // Remember the port that worked for the next launch.
+                    if !self.test_mode()
+                        && self.config.last_port.as_deref() != Some(self.selected_port.as_str())
+                    {
+                        self.config.last_port = Some(self.selected_port.clone());
+                        let _ = self.config.save();
+                    }
                     self.status = if self.test_mode() {
                         "Test mode: simulated data.".into()
                     } else {
