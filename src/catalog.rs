@@ -278,6 +278,88 @@ pub const CATALOG: &[SensorSpec] = &[
         desc: "Closed-loop status flags per bank (1 = running lean).",
         typical: "Flags toggle as the ECU chases stoichiometric in closed loop.",
     },
+    // ---- Late-model / extended registers (0x02-0x03, 0x25-0x53). Present
+    // only on some ECUs; unsupported registers simply read back nothing.
+    SensorSpec {
+        id: "cas_ref",
+        label: "CAS Ref",
+        regs: &[0x02, 0x03],
+        unit: UnitKind::Rpm,
+        range: (0.0, 8000.0),
+        decimals: 0,
+        desc: "CAS reference RPM, 16-bit x 8. Alternate RPM source; on '96+ ECUs it is 2.494e6 / raw instead.",
+        typical: "Should roughly track RPM.",
+    },
+    SensorSpec {
+        id: "wastegate",
+        label: "Wastegate",
+        regs: &[0x28],
+        unit: UnitKind::Percent,
+        range: (0.0, 100.0),
+        decimals: 0,
+        desc: "Wastegate solenoid duty, raw / 2 = % (scale not confirmed in the register PDF). Turbo ECUs.",
+        typical: "0% at idle and cruise, rising under boost.",
+    },
+    SensorSpec {
+        id: "boost",
+        label: "Boost",
+        regs: &[0x29],
+        unit: UnitKind::Volts,
+        range: (0.0, 5.0),
+        decimals: 2,
+        desc: "Turbo boost (pressure) sensor signal; raw x 20 mV. Not a direct psi readout.",
+        typical: "~1.5-2.5 V at atmospheric pressure, rising with boost.",
+    },
+    SensorSpec {
+        id: "calld",
+        label: "Load",
+        regs: &[0x33, 0x34],
+        unit: UnitKind::Percent,
+        range: (0.0, 100.0),
+        decimals: 1,
+        desc: "CAL/LD engine load: reg 0x33 + reg 0x34/255 = % (per the '96+ specifics doc).",
+        typical: "~15-25% at idle, 60-100% at full throttle.",
+    },
+    SensorSpec {
+        id: "rear_o2",
+        label: "Rear O2",
+        regs: &[0x35],
+        unit: UnitKind::Volts,
+        range: (0.0, 1.2),
+        decimals: 2,
+        desc: "Rear (downstream) O2 sensor voltage; raw x 10 mV. '96+ OBD-II-era ECUs.",
+        typical: "Fairly steady ~0.5-0.7 V with a healthy catalyst.",
+    },
+    SensorSpec {
+        id: "abs_tps",
+        label: "Abs TPS",
+        regs: &[0x37],
+        unit: UnitKind::Percent,
+        range: (0.0, 100.0),
+        decimals: 1,
+        desc: "Absolute throttle position; raw / 2.55 = %. Later ECUs only.",
+        typical: "0% closed, ~100% wide open.",
+    },
+    SensorSpec {
+        id: "maf_pct",
+        label: "MAF %",
+        regs: &[0x38],
+        unit: UnitKind::Percent,
+        range: (0.0, 100.0),
+        decimals: 1,
+        desc: "MAF flow as % of the ECU's reference flow (per the '96+ specifics doc).",
+        typical: "Low single digits at idle, climbing with load.",
+    },
+    SensorSpec {
+        id: "abs_pressure",
+        label: "Abs Pressure",
+        regs: &[0x4A],
+        unit: UnitKind::Volts,
+        range: (0.0, 5.0),
+        decimals: 2,
+        desc: "Absolute pressure sensor signal; raw x 20 mV. Used for barometric/manifold pressure.",
+        typical: "Higher with the key on/engine off (baro), lower at idle (manifold vacuum).",
+    },
 ];
 
 /// What a fresh install displays (the original 8 gauges + MAF and O2).
@@ -387,8 +469,14 @@ impl SensorSpec {
         let raw = || byte_of(frame, stream_regs, self.regs[0]);
         let v = match self.id {
             "rpm" => u16be(frame, stream_regs, 0x00, 0x01)? as f64 * 12.5,
+            "cas_ref" => u16be(frame, stream_regs, 0x02, 0x03)? as f64 * 8.0,
             "maf" | "maf_rh" => {
                 u16be(frame, stream_regs, self.regs[0], self.regs[1])? as f64 * 5.0 / 1000.0
+            }
+            "calld" => {
+                let whole = byte_of(frame, stream_regs, 0x33)? as f64;
+                let frac = byte_of(frame, stream_regs, 0x34)? as f64;
+                whole + frac / 255.0
             }
             "inj_lh" | "inj_rh" => {
                 u16be(frame, stream_regs, self.regs[0], self.regs[1])? as f64 / 100.0
@@ -396,12 +484,13 @@ impl SensorSpec {
             "coolant" | "fuel_temp" | "iat" => cfg.display_temp(raw()? as f64 - 50.0),
             "speed" => cfg.display_speed(raw()? as f64 * 2.0),
             "battery" => raw()? as f64 * 80.0 / 1000.0,
-            "tps" | "egt" => raw()? as f64 * 20.0 / 1000.0,
-            "o2_lh" | "o2_rh" => raw()? as f64 * 10.0 / 1000.0,
+            "tps" | "egt" | "boost" | "abs_pressure" => raw()? as f64 * 20.0 / 1000.0,
+            "o2_lh" | "o2_rh" | "rear_o2" => raw()? as f64 * 10.0 / 1000.0,
             "timing" => 110.0 - raw()? as f64,
-            "aac" => raw()? as f64 / 2.0,
+            "aac" | "wastegate" => raw()? as f64 / 2.0,
+            "abs_tps" => raw()? as f64 / 2.55,
             "alpha_lh" | "alpha_rh" | "learn_lh" | "learn_rh" => raw()? as f64,
-            _ => raw()? as f64, // digital registers and unknown items
+            _ => raw()? as f64, // maf_pct, digital registers, and unknown items
         };
         Some(v)
     }
@@ -489,11 +578,19 @@ pub fn spec_for_column(column: &str) -> Option<&'static SensorSpec> {
         ("Intake Air Temp", "iat"),
         ("Battery", "battery"),
         ("TPS", "tps"),
+        ("MAF %", "maf_pct"),
         ("MAF RH", "maf_rh"),
         ("MAF", "maf"),
         ("O2 RH", "o2_rh"),
         ("O2", "o2_lh"),
         ("EGT", "egt"),
+        ("CAS Ref", "cas_ref"),
+        ("Wastegate", "wastegate"),
+        ("Boost", "boost"),
+        ("Load", "calld"),
+        ("Rear O2", "rear_o2"),
+        ("Abs TPS", "abs_tps"),
+        ("Abs Pressure", "abs_pressure"),
         ("Injector RH", "inj_rh"),
         ("Injector", "inj_lh"),
         ("Timing", "timing"),
@@ -545,6 +642,23 @@ mod tests {
         let regs = vec![0x0B];
         let v = spec.decode(&[60], &regs, &cfg).unwrap(); // 120 kph
         assert!((v - 74.56).abs() < 0.1);
+    }
+
+    #[test]
+    fn decode_late_model_registers() {
+        let cfg = Config::default();
+        // CAL/LD: 0x33 = 40, 0x34 = 127 -> 40 + 127/255 = 40.5%
+        let spec = find_spec("calld").unwrap();
+        let v = spec.decode(&[40, 127], &[0x33, 0x34], &cfg).unwrap();
+        assert!((v - 40.5).abs() < 0.01);
+        // Abs TPS: 127.5 raw -> 50%
+        let spec = find_spec("abs_tps").unwrap();
+        let v = spec.decode(&[128], &[0x37], &cfg).unwrap();
+        assert!((v - 50.2).abs() < 0.1);
+        // CAS ref: 0x0064 = 100 -> 800 RPM
+        let spec = find_spec("cas_ref").unwrap();
+        let v = spec.decode(&[0x00, 0x64], &[0x02, 0x03], &cfg).unwrap();
+        assert!((v - 800.0).abs() < 1.0);
     }
 
     #[test]

@@ -11,6 +11,8 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
 - Selectable display items: pick which ECU registers to stream (Settings ->
   Displayed items); 24 known sensors/registers including dual-bank MAF/O2/
   injector, AF alpha/self-learn, and raw digital bit registers
+- Late-model registers: CAS reference, wastegate duty, boost sensor, CAL/LD
+  engine load, rear O2, absolute TPS, MAF %, absolute pressure sensor
 - Digital bit registers (0x13/0x1E/0x1F/0x21) decode to named on/off
   indicators (fuel pump relay, A/C switch, coolant fans, ...) in a compact
   region below the gauges

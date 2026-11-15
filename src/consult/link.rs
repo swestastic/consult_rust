@@ -448,13 +448,15 @@ fn sim_frame(rng: &mut XorShift, regs: &[u8], t: f64) -> Vec<u8> {
     let temp_c = rng.range(10.0, 45.0);
     let egt = rng.range(0.5, 4.0);
     let alpha = rng.range(85.0, 115.0);
+    let load = rng.range(15.0, 80.0);
 
     regs.iter()
         .map(|&reg| match reg {
             0x00 => (rpm_raw >> 8) as u8,
             0x01 => rpm_raw as u8,
-            0x02 => 0,
-            0x03 => (rpm_raw / 2) as u8, // CAS ref, rough
+            // CAS ref raw = RPM / 8 (generic scale).
+            0x02 => (((rpm_raw as f64 * 12.5 / 8.0) as u16) >> 8) as u8,
+            0x03 => (rpm_raw as f64 * 12.5 / 8.0) as u8,
             0x04 => (maf_raw >> 8) as u8,
             0x05 => maf_raw as u8,
             0x06 => (maf_raw >> 8) as u8,
@@ -472,6 +474,14 @@ fn sim_frame(rng: &mut XorShift, regs: &[u8], t: f64) -> Vec<u8> {
             0x16 => (110.0 - timing) as u8,
             0x17 => (aac * 2.0) as u8,
             0x1A..=0x1D => alpha as u8,
+            0x28 => (rng.range(0.0, 60.0) * 2.0) as u8,        // wastegate %
+            0x29 => (rng.range(0.8, 4.5) * 1000.0 / 20.0) as u8, // boost V
+            0x33 => load as u8,
+            0x34 => ((load - load.floor()) * 255.0) as u8,
+            0x35 => (o2 * 100.0) as u8,
+            0x37 => (tps / 5.0 * 255.0) as u8, // abs TPS %
+            0x38 => (maf_raw as f64 * 5.0 / 1000.0 / 5.0 * 100.0) as u8, // MAF %
+            0x4A => (rng.range(2.0, 4.8) * 1000.0 / 20.0) as u8, // abs pressure V
             _ => (rng.next() & 0xFF) as u8,
         })
         .collect()
