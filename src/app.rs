@@ -219,6 +219,16 @@ impl ConsultApp {
         };
         app.refresh_ports();
         app.load_settings_buffer();
+
+        // Demo hook for layout verification: CONSULT_DEMO=1 auto-connects
+        // the simulator on the Data Stream page with digital registers shown.
+        if std::env::var_os("CONSULT_DEMO").is_some() {
+            for d in ["d13", "d1e", "d1f", "d21"] {
+                app.config.display_items.push(d.to_string());
+            }
+            app.page = Page::DataStream;
+            app.connect();
+        }
         app
     }
 
@@ -414,7 +424,6 @@ impl ConsultApp {
             self.refresh_ports();
         }
     }
-
 }
 
 impl eframe::App for ConsultApp {

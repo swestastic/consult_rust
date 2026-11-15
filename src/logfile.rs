@@ -52,7 +52,10 @@ impl LogFile {
         if head_cols.len() < 2 {
             return Err("Log file has no data columns".into());
         }
-        let columns: Vec<String> = head_cols[1..].iter().map(|s| s.trim().to_string()).collect();
+        let columns: Vec<String> = head_cols[1..]
+            .iter()
+            .map(|s| s.trim().to_string())
+            .collect();
         let ncols = columns.len();
 
         let speed_unit = columns
@@ -64,13 +67,7 @@ impl LogFile {
         let temp_unit = columns
             .iter()
             .find(|c| c.starts_with("Coolant") || c.starts_with("Temp"))
-            .map(|c| {
-                if c.contains('F') {
-                    "F"
-                } else {
-                    "C"
-                }
-            })
+            .map(|c| if c.contains('F') { "F" } else { "C" })
             .unwrap_or("F")
             .to_string();
 
@@ -133,10 +130,7 @@ impl LogFile {
         } else {
             0.0
         };
-        a.iter()
-            .zip(b)
-            .map(|(x, y)| x + (y - x) * frac)
-            .collect()
+        a.iter().zip(b).map(|(x, y)| x + (y - x) * frac).collect()
     }
 }
 

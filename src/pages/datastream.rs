@@ -84,7 +84,16 @@ impl ConsultApp {
                             _ => false,
                         };
                         let (min, max) = spec.range_for(&cfg);
-                        gauge(ui, gsize, &spec.title(&cfg), v, min, max, spec.decimals, warn);
+                        gauge(
+                            ui,
+                            gsize,
+                            &spec.title(&cfg),
+                            v,
+                            min,
+                            max,
+                            spec.decimals,
+                            warn,
+                        );
                         col += 1;
                         if col % cols == 0 {
                             ui.end_row();
@@ -139,10 +148,14 @@ fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f6
     let dim = ui.visuals().weak_text_color();
     let fg = ui.visuals().text_color();
 
+    painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
     painter.rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, ui.style().visuals.widgets.noninteractive.bg_stroke.color),
+        egui::Stroke::new(
+            1.0,
+            ui.style().visuals.widgets.noninteractive.bg_stroke.color,
+        ),
         egui::StrokeKind::Inside,
     );
 

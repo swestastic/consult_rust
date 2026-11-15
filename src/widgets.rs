@@ -31,81 +31,95 @@ pub fn gauge(
     decimals: usize,
     warn: bool,
 ) {
-    egui::Frame::group(ui.style())
-        .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
-        .show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-            let painter = ui.painter_at(rect);
+    // Draw the border ourselves instead of using Frame::group: a frame adds
+    // inner margins around the content, which would make the widget wider
+    // than the computed cell size and break the right-edge padding math.
+    let (outer, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(outer);
+    painter.rect_filled(outer, 4.0, ui.visuals().extreme_bg_color);
+    painter.rect_stroke(
+        outer,
+        4.0,
+        Stroke::new(
+            1.0,
+            ui.style().visuals.widgets.noninteractive.bg_stroke.color,
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let rect = outer.shrink(6.0);
 
-            let center = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.72);
-            let radius = (rect.width().min(rect.height() * 1.2)) / 2.0 - 16.0;
-            let dim = ui.visuals().weak_text_color();
-            let fg = ui.visuals().text_color();
+    let center = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.72);
+    let radius = (rect.width().min(rect.height() * 1.2)) / 2.0 - 16.0;
+    let dim = ui.visuals().weak_text_color();
+    let fg = ui.visuals().text_color();
 
-            // Dial arc (180 degrees, left = min, right = max).
-            let arc: Vec<Pos2> = (0..=48)
-                .map(|i| {
-                    let a = std::f32::consts::PI * (i as f32 / 48.0);
-                    center + vec2(radius * a.cos(), -radius * a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(arc, Stroke::new(3.0, dim)));
+    // Dial arc (180 degrees, left = min, right = max).
+    let arc: Vec<Pos2> = (0..=48)
+        .map(|i| {
+            let a = std::f32::consts::PI * (i as f32 / 48.0);
+            center + vec2(radius * a.cos(), -radius * a.sin())
+        })
+        .collect();
+    painter.add(egui::Shape::line(arc, Stroke::new(3.0, dim)));
 
-            // Ticks and labels.
-            for i in 0..5 {
-                let frac = i as f32 / 4.0;
-                let tick_val = min + (max - min) * frac as f64;
-                let a = std::f32::consts::PI * (1.0 - frac);
-                let dir = vec2(a.cos(), -a.sin());
-                painter.line_segment(
-                    [center + dir * (radius - 8.0), center + dir * radius],
-                    Stroke::new(2.0, dim),
-                );
-                let label = if max - min < 25.0 {
-                    format!("{tick_val:.1}")
-                } else {
-                    format!("{}", tick_val as i32)
-                };
-                painter.text(
-                    center + dir * (radius + 11.0),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    egui::FontId::proportional(10.0),
-                    dim,
-                );
-            }
+    // Ticks and labels.
+    for i in 0..5 {
+        let frac = i as f32 / 4.0;
+        let tick_val = min + (max - min) * frac as f64;
+        let a = std::f32::consts::PI * (1.0 - frac);
+        let dir = vec2(a.cos(), -a.sin());
+        painter.line_segment(
+            [center + dir * (radius - 8.0), center + dir * radius],
+            Stroke::new(2.0, dim),
+        );
+        let label = if max - min < 25.0 {
+            format!("{tick_val:.1}")
+        } else {
+            format!("{}", tick_val as i32)
+        };
+        painter.text(
+            center + dir * (radius + 11.0),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(10.0),
+            dim,
+        );
+    }
 
-            // Needle.
-            let frac = ((value - min) / (max - min)).clamp(0.0, 1.0) as f32;
-            let a = std::f32::consts::PI * (1.0 - frac);
-            let needle_color = if warn {
-                Color32::from_rgb(255, 60, 60)
-            } else {
-                Color32::from_rgb(200, 40, 40)
-            };
-            painter.line_segment(
-                [center, center + vec2(a.cos(), -a.sin()) * (radius - 10.0)],
-                Stroke::new(2.5, needle_color),
-            );
-            painter.circle_filled(center, 4.5, Color32::DARK_GRAY);
+    // Needle.
+    let frac = ((value - min) / (max - min)).clamp(0.0, 1.0) as f32;
+    let a = std::f32::consts::PI * (1.0 - frac);
+    let needle_color = if warn {
+        Color32::from_rgb(255, 60, 60)
+    } else {
+        Color32::from_rgb(200, 40, 40)
+    };
+    painter.line_segment(
+        [center, center + vec2(a.cos(), -a.sin()) * (radius - 10.0)],
+        Stroke::new(2.5, needle_color),
+    );
+    painter.circle_filled(center, 4.5, Color32::DARK_GRAY);
 
-            // Title and value.
-            painter.text(
-                Pos2::new(center.x, center.y - radius * 0.62),
-                egui::Align2::CENTER_CENTER,
-                title,
-                egui::FontId::proportional(13.0),
-                dim,
-            );
-            let value_color = if warn { Color32::from_rgb(255, 60, 60) } else { fg };
-            painter.text(
-                Pos2::new(center.x, center.y - 14.0),
-                egui::Align2::CENTER_CENTER,
-                format!("{value:.decimals$}"),
-                egui::FontId::new(19.0, egui::FontFamily::Proportional),
-                value_color,
-            );
-        });
+    // Title and value.
+    painter.text(
+        Pos2::new(center.x, center.y - radius * 0.62),
+        egui::Align2::CENTER_CENTER,
+        title,
+        egui::FontId::proportional(13.0),
+        dim,
+    );
+    let value_color = if warn {
+        Color32::from_rgb(255, 60, 60)
+    } else {
+        fg
+    };
+    painter.text(
+        Pos2::new(center.x, center.y - 14.0),
+        egui::Align2::CENTER_CENTER,
+        format!("{value:.decimals$}"),
+        egui::FontId::new(19.0, egui::FontFamily::Proportional),
+        value_color,
+    );
 }
 
 pub const SERIES_COLORS: [Color32; 9] = [
@@ -176,12 +190,7 @@ pub fn time_plot(
     };
 
     // Frame and horizontal gridlines.
-    painter.rect_stroke(
-        plot,
-        0.0,
-        Stroke::new(1.0, dim),
-        egui::StrokeKind::Inside,
-    );
+    painter.rect_stroke(plot, 0.0, Stroke::new(1.0, dim), egui::StrokeKind::Inside);
     for i in 0..=4 {
         let v = y_min + (y_max - y_min) * (i as f64 / 4.0);
         let y = to_screen(0.0, v).y;

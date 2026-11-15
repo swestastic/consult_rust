@@ -129,8 +129,12 @@ impl Config {
             .trim()
             .trim_start_matches("0x")
             .trim_start_matches("0X");
-        u8::from_str_radix(trimmed, 16)
-            .map_err(|_| format!("Invalid ECU address \"{}\" (expected hex, e.g. EF)", self.ecu_address))
+        u8::from_str_radix(trimmed, 16).map_err(|_| {
+            format!(
+                "Invalid ECU address \"{}\" (expected hex, e.g. EF)",
+                self.ecu_address
+            )
+        })
     }
 
     /// Indicated kph -> display-unit, corrected speed.

@@ -105,7 +105,11 @@ impl ConsultApp {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui
-                .button(if self.replay.playing { "⏸ Pause" } else { "⏵ Play" })
+                .button(if self.replay.playing {
+                    "⏸ Pause"
+                } else {
+                    "⏵ Play"
+                })
                 .clicked()
             {
                 self.replay.toggle_play();
@@ -125,10 +129,7 @@ impl ConsultApp {
         let slider = egui::Slider::new(&mut t, 0.0..=duration.max(0.001))
             .show_value(false)
             .clamping(egui::SliderClamping::Always);
-        if ui
-            .add_sized([ui.available_width(), 18.0], slider)
-            .changed()
-        {
+        if ui.add_sized([ui.available_width(), 18.0], slider).changed() {
             self.replay.t = t;
             self.replay.last_tick = std::time::Instant::now();
         }
@@ -217,7 +218,9 @@ impl ConsultApp {
                 }
                 ui.separator();
                 ui.checkbox(&mut self.replay.normalize, "Normalize")
-                    .on_hover_text("Scale each channel to 0..1 so different units can be compared.");
+                    .on_hover_text(
+                        "Scale each channel to 0..1 so different units can be compared.",
+                    );
             });
 
             // ---- Plot
@@ -243,17 +246,32 @@ impl ConsultApp {
 
 /// Plain value box for columns without a known gauge.
 fn value_box(ui: &mut egui::Ui, title: &str, value: f64, decimals: usize, size: egui::Vec2) {
-    egui::Frame::group(ui.style())
-        .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
-        .show(ui, |ui| {
-            ui.set_min_size(size);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(title).weak());
-                ui.label(
-                    RichText::new(format!("{value:.decimals$}"))
-                        .monospace()
-                        .size(18.0),
-                );
-            });
-        });
+    // Painted border instead of Frame::group so the widget is exactly `size`
+    // (frame margins would otherwise overflow the computed cell width).
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(
+            1.0,
+            ui.style().visuals.widgets.noninteractive.bg_stroke.color,
+        ),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.top() + 12.0),
+        egui::Align2::CENTER_TOP,
+        title,
+        egui::FontId::proportional(11.0),
+        ui.visuals().weak_text_color(),
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.bottom() - 12.0),
+        egui::Align2::CENTER_BOTTOM,
+        format!("{value:.decimals$}"),
+        egui::FontId::monospace(16.0),
+        ui.visuals().text_color(),
+    );
 }

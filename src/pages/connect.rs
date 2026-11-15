@@ -8,7 +8,9 @@ impl ConsultApp {
         ui.vertical_centered(|ui| {
             ui.heading("Connect to ECU");
             ui.add_space(10.0);
-            ui.label("Select your USB Consult adapter, or Test Mode to try the app without hardware.");
+            ui.label(
+                "Select your USB Consult adapter, or Test Mode to try the app without hardware.",
+            );
             ui.add_space(20.0);
         });
 
@@ -25,7 +27,11 @@ impl ConsultApp {
                         .width(260.0)
                         .show_ui(ui, |ui| {
                             for choice in choices {
-                                ui.selectable_value(&mut self.selected_port, choice.clone(), choice);
+                                ui.selectable_value(
+                                    &mut self.selected_port,
+                                    choice.clone(),
+                                    choice,
+                                );
                             }
                         });
                     if ui.button("Refresh").clicked() {

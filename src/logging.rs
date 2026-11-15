@@ -33,7 +33,8 @@ impl DataLogger {
         std::fs::create_dir_all("logs").map_err(|e| format!("Cannot create logs dir: {e}"))?;
         let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let name = format!("logs/datalog_{stamp}.csv");
-        let file = std::fs::File::create(&name).map_err(|e| format!("Cannot create {name}: {e}"))?;
+        let file =
+            std::fs::File::create(&name).map_err(|e| format!("Cannot create {name}: {e}"))?;
         let mut w = std::io::BufWriter::new(file);
         let mut header = String::from("Timestamp");
         for c in columns {
@@ -48,7 +49,9 @@ impl DataLogger {
 
     /// `values` are (value, decimals) pairs in column order.
     pub fn log(&mut self, values: &[(f64, usize)]) {
-        let Some(w) = self.writer.as_mut() else { return };
+        let Some(w) = self.writer.as_mut() else {
+            return;
+        };
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         let mut row = ts.to_string();
         for (v, d) in values {

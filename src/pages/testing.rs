@@ -35,7 +35,9 @@ impl ConsultApp {
                 format!("Fuel pump {}", if data == 0x00 { "ON" } else { "OFF" })
             }
             k if k == activate::POWER_BALANCE => format!("Power balance mask 0x{data:02X}"),
-            k if k == activate::COOLANT_TEMP => format!("Coolant temp test: {} C", data as i32 - 50),
+            k if k == activate::COOLANT_TEMP => {
+                format!("Coolant temp test: {} C", data as i32 - 50)
+            }
             k if k == activate::FUEL_TRIM => format!("Fuel trim: {}%", data as i32 - 100),
             k if k == activate::IGN_TIMING => format!("Timing adjust: {} deg", data as i8),
             k if k == activate::AAC => format!("AAC adjust: {:.1}%", data as i8 as f32 / 2.0),
@@ -65,7 +67,10 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
         let mut changed = false;
         for i in 0..8 {
             if ui
-                .checkbox(&mut app.testing.cylinders[i], format!("Disable cylinder {}", i + 1))
+                .checkbox(
+                    &mut app.testing.cylinders[i],
+                    format!("Disable cylinder {}", i + 1),
+                )
                 .changed()
             {
                 changed = true;
@@ -170,7 +175,13 @@ fn show_raw(app: &mut ConsultApp, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
         ui.label(RichText::new("Response log").strong());
-        let text = app.testing.log.iter().cloned().collect::<Vec<_>>().join("\n");
+        let text = app
+            .testing
+            .log
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
         egui::ScrollArea::vertical()
             .max_height(430.0)
             .stick_to_bottom(true)

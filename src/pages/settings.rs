@@ -113,7 +113,10 @@ impl ConsultApp {
             let s = &mut self.settings;
             let selected = catalog::selected_specs(&s.items);
             let used = catalog::register_count(&selected);
-            ui.label(format!("{used}/{} registers used", catalog::MAX_STREAM_REGISTERS));
+            ui.label(format!(
+                "{used}/{} registers used",
+                catalog::MAX_STREAM_REGISTERS
+            ));
 
             egui::Grid::new("items_grid")
                 .num_columns(3)
