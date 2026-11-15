@@ -27,6 +27,39 @@ impl ConsultApp {
         let rpm_warn = cfg.rpm_warning as f64;
         let temp_warn = cfg.coolant_warning_display();
 
+        // Controls docked to the bottom of the page so they are always
+        // visible regardless of scroll position or window height.
+        egui::Panel::bottom("stream_controls").show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if self.logger.is_logging() {
+                    if ui.button("Stop Data Logging").clicked() {
+                        self.logger.stop();
+                    }
+                    if let Some(name) = &self.logger.file_name {
+                        ui.label(RichText::new(format!("Logging to {name}")).color(Color32::GREEN));
+                    }
+                } else if ui.button("Start Data Logging").clicked() {
+                    let columns: Vec<String> = specs.iter().map(|s| s.title(&cfg)).collect();
+                    match self.logger.start(&columns) {
+                        Ok(_) => self.status = "Logging started.".into(),
+                        Err(e) => self.status = e,
+                    }
+                }
+
+                ui.separator();
+                if self.streaming {
+                    if ui.button("Pause Stream").clicked() {
+                        self.send(LinkCommand::StopStream);
+                        self.streaming = false;
+                    }
+                } else if ui.button("Resume Stream").clicked() {
+                    self.send(LinkCommand::StartStream(self.config.stream_registers()));
+                    self.streaming = true;
+                }
+            });
+        });
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             let avail = ui.available_width();
             let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
@@ -79,35 +112,6 @@ impl ConsultApp {
                             }
                         }
                     });
-            }
-        });
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if self.logger.is_logging() {
-                if ui.button("Stop Data Logging").clicked() {
-                    self.logger.stop();
-                }
-                if let Some(name) = &self.logger.file_name {
-                    ui.label(RichText::new(format!("Logging to {name}")).color(Color32::GREEN));
-                }
-            } else if ui.button("Start Data Logging").clicked() {
-                let columns: Vec<String> = specs.iter().map(|s| s.title(&cfg)).collect();
-                match self.logger.start(&columns) {
-                    Ok(_) => self.status = "Logging started.".into(),
-                    Err(e) => self.status = e,
-                }
-            }
-
-            ui.separator();
-            if self.streaming {
-                if ui.button("Pause Stream").clicked() {
-                    self.send(LinkCommand::StopStream);
-                    self.streaming = false;
-                }
-            } else if ui.button("Resume Stream").clicked() {
-                self.send(LinkCommand::StartStream(self.config.stream_registers()));
-                self.streaming = true;
             }
         });
 
