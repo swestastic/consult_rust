@@ -14,14 +14,7 @@ impl ConsultApp {
             rpm_warning: c.rpm_warning.to_string(),
             coolant_warning: format!("{:.1}", c.coolant_warning_display()),
             battery_low: format!("{:.1}", c.battery_low_v),
-            stock_width: fmt(c.stock_tire.width_mm),
-            stock_aspect: fmt(c.stock_tire.aspect),
-            stock_rim: fmt(c.stock_tire.rim_in),
-            new_width: fmt(c.new_tire.width_mm),
-            new_aspect: fmt(c.new_tire.aspect),
-            new_rim: fmt(c.new_tire.rim_in),
-            stock_final: fmt(c.stock_final_drive),
-            new_final: fmt(c.new_final_drive),
+            speed_correction: fmt(c.speed_correction),
             ecu_address: c.ecu_address.clone(),
             items: c.display_items.clone(),
             status: String::new(),
@@ -85,32 +78,15 @@ impl ConsultApp {
 
                 let s = &mut self.settings;
                 egui::Grid::new("correction_grid")
-                    .num_columns(4)
+                    .num_columns(3)
                     .spacing([10.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("");
-                        ui.label(egui::RichText::new("Stock").strong());
-                        ui.label(egui::RichText::new("New").strong());
-                        ui.end_row();
-
-                        ui.label("Tire width (mm):");
-                        ui.add(egui::TextEdit::singleline(&mut s.stock_width).desired_width(80.0));
-                        ui.add(egui::TextEdit::singleline(&mut s.new_width).desired_width(80.0));
-                        ui.end_row();
-
-                        ui.label("Aspect ratio:");
-                        ui.add(egui::TextEdit::singleline(&mut s.stock_aspect).desired_width(80.0));
-                        ui.add(egui::TextEdit::singleline(&mut s.new_aspect).desired_width(80.0));
-                        ui.end_row();
-
-                        ui.label("Rim diameter (in):");
-                        ui.add(egui::TextEdit::singleline(&mut s.stock_rim).desired_width(80.0));
-                        ui.add(egui::TextEdit::singleline(&mut s.new_rim).desired_width(80.0));
-                        ui.end_row();
-
-                        ui.label("Final drive:");
-                        ui.add(egui::TextEdit::singleline(&mut s.stock_final).desired_width(80.0));
-                        ui.add(egui::TextEdit::singleline(&mut s.new_final).desired_width(80.0));
+                        ui.label("Correction factor:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut s.speed_correction)
+                                .desired_width(80.0),
+                        );
+                        ui.label("actual = indicated x factor (1 = no correction)");
                         ui.end_row();
                     });
 
@@ -251,14 +227,7 @@ impl ConsultApp {
         cfg.rpm_warning = rpm_warning;
         cfg.coolant_warning_c = cfg.temp_to_c(f("Coolant warning", &s.coolant_warning)?);
         cfg.battery_low_v = f("Battery warning", &s.battery_low)?;
-        cfg.stock_tire.width_mm = f("Stock tire width", &s.stock_width)?;
-        cfg.stock_tire.aspect = f("Stock aspect ratio", &s.stock_aspect)?;
-        cfg.stock_tire.rim_in = f("Stock rim", &s.stock_rim)?;
-        cfg.new_tire.width_mm = f("New tire width", &s.new_width)?;
-        cfg.new_tire.aspect = f("New aspect ratio", &s.new_aspect)?;
-        cfg.new_tire.rim_in = f("New rim", &s.new_rim)?;
-        cfg.stock_final_drive = f("Stock final drive", &s.stock_final)?;
-        cfg.new_final_drive = f("New final drive", &s.new_final)?;
+        cfg.speed_correction = f("Speed correction factor", &s.speed_correction)?;
         cfg.ecu_address = s.ecu_address.trim().to_uppercase();
         cfg.ecu_address_candidates()?; // validate
 

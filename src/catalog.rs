@@ -55,7 +55,7 @@ pub const CATALOG: &[SensorSpec] = &[
         unit: UnitKind::Speed,
         range: (0.0, 160.0),
         decimals: 0,
-        desc: "Vehicle speed sensor, raw x 2 km/h, then corrected by your tire/final-drive settings.",
+        desc: "Vehicle speed sensor, raw x 2 km/h, then multiplied by your speed correction factor.",
         typical: "0 at rest. Compare against the speedometer to dial in correction.",
     },
     SensorSpec {

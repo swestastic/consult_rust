@@ -37,29 +37,14 @@ impl TempUnit {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct TireSpec {
-    pub width_mm: f64,
-    pub aspect: f64,
-    pub rim_in: f64,
-}
-
-impl TireSpec {
-    /// Overall tire diameter in inches, from the metric size code.
-    pub fn height_in(&self) -> f64 {
-        self.width_mm / 25.4 * (self.aspect / 100.0) * 2.0 + self.rim_in
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub speed_unit: SpeedUnit,
     pub temp_unit: TempUnit,
-    pub stock_final_drive: f64,
-    pub new_final_drive: f64,
-    pub stock_tire: TireSpec,
-    pub new_tire: TireSpec,
+    /// Multiplier applied to the ECU's indicated speed (e.g. 1.03 if the
+    /// speedometer reads 3% low) to account for tire/gear changes.
+    pub speed_correction: f64,
     pub rpm_warning: u32,
     /// Stored canonically in Celsius regardless of display unit.
     pub coolant_warning_c: f64,
@@ -81,18 +66,7 @@ impl Default for Config {
         Config {
             speed_unit: SpeedUnit::Mph,
             temp_unit: TempUnit::F,
-            stock_final_drive: 4.083,
-            new_final_drive: 4.083,
-            stock_tire: TireSpec {
-                width_mm: 225.0,
-                aspect: 50.0,
-                rim_in: 16.0,
-            },
-            new_tire: TireSpec {
-                width_mm: 225.0,
-                aspect: 50.0,
-                rim_in: 16.0,
-            },
+            speed_correction: 1.0,
             rpm_warning: 7000,
             coolant_warning_c: 93.5,
             battery_low_v: 12.0,
@@ -122,17 +96,6 @@ impl Config {
         std::fs::write(CONFIG_FILE, text).map_err(|e| format!("Cannot write {CONFIG_FILE}: {e}"))
     }
 
-    /// Multiplicative correction from indicated to actual speed, accounting
-    /// for tire size and final-drive changes.
-    pub fn speed_correction(&self) -> f64 {
-        let stock_h = self.stock_tire.height_in();
-        let new_h = self.new_tire.height_in();
-        if stock_h <= 0.0 || self.new_final_drive <= 0.0 {
-            return 1.0;
-        }
-        (new_h * self.stock_final_drive) / (stock_h * self.new_final_drive)
-    }
-
     pub fn ecu_address_byte(&self) -> Result<u8, String> {
         let trimmed = self
             .ecu_address
@@ -158,7 +121,7 @@ impl Config {
 
     /// Indicated kph -> display-unit, corrected speed.
     pub fn display_speed(&self, kph: f64) -> f64 {
-        let corrected = kph * self.speed_correction();
+        let corrected = kph * self.speed_correction;
         match self.speed_unit {
             SpeedUnit::Kph => corrected,
             SpeedUnit::Mph => corrected * 0.621371192237334,

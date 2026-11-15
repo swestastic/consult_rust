@@ -42,8 +42,8 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
   so base idle can be set without unplugging the TPS
 - Raw hex command console
 - Test mode with simulated data (no hardware needed)
-- Unit selection (MPH/KPH, F/C), speedometer correction for tire/final-drive
-  changes, configurable warning thresholds and ECU address
+- Unit selection (MPH/KPH, F/C), speedometer correction factor,
+  configurable warning thresholds and ECU address
 
 ## Protocol notes
 
