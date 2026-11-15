@@ -412,13 +412,27 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
         ui.label("Overrides latch until you send OFF, cancel, or leave this page.");
         egui::Grid::new("onoff_grid").num_columns(3).show(ui, |ui| {
             on_off_row(app, ui, "IACV/FICD solenoid", activate::FICD_SOLENOID);
-            on_off_row(app, ui, "P/Reg control solenoid", activate::PREG_SOLENOID);
+            // Hardware-specific tests show only when the identified ECU is
+            // known to have it (or the show-all override is on).
+            if app.feature_visible(crate::ecuid::activation_feature(activate::PREG_SOLENOID)) {
+                on_off_row(app, ui, "P/Reg control solenoid", activate::PREG_SOLENOID);
+            }
             on_off_row(app, ui, "IACV-AAC/V control valve", activate::AACV_CONTROL_VALVE);
-            on_off_row(app, ui, "Valve timing solenoid (VTC)", activate::TIMING_SOLENOID);
-            on_off_row(app, ui, "MAP SW solenoid", activate::MAP_SW_SOLENOID);
+            if app.feature_visible(crate::ecuid::activation_feature(activate::TIMING_SOLENOID)) {
+                on_off_row(app, ui, "Valve timing solenoid (VTC)", activate::TIMING_SOLENOID);
+            }
+            if app.feature_visible(crate::ecuid::activation_feature(activate::MAP_SW_SOLENOID)) {
+                on_off_row(app, ui, "MAP SW solenoid", activate::MAP_SW_SOLENOID);
+            }
             on_off_row(app, ui, "Coolant fan low speed", activate::FAN_LOW);
             on_off_row(app, ui, "Coolant fan high speed", activate::FAN_HIGH);
         });
+        let any_hidden = [activate::PREG_SOLENOID, activate::MAP_SW_SOLENOID, activate::TIMING_SOLENOID]
+            .iter()
+            .any(|k| !app.feature_visible(crate::ecuid::activation_feature(*k)));
+        if any_hidden {
+            ui.label("Some tests are hidden by the ECU filter (Settings > Show all options).");
+        }
     });
 }
 

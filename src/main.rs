@@ -4,6 +4,7 @@ mod app;
 mod catalog;
 mod config;
 mod consult;
+mod ecuid;
 mod logfile;
 mod logging;
 mod pages;

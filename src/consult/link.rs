@@ -539,7 +539,9 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                     let _ = evt.send(LinkEvent::DtcCleared);
                 }
                 LinkCommand::EcuInfo => {
-                    let _ = evt.send(LinkEvent::PartNumber("SIMU 23710-LATED".into()));
+                    // A real part number from the ECU ID table (Z32 300ZX
+                    // Turbo) so test mode exercises the ECU-based filter.
+                    let _ = evt.send(LinkEvent::PartNumber("SIMU 23710-41P70".into()));
                 }
                 LinkCommand::Activate { kind, data } => {
                     let _ = evt.send(LinkEvent::RawLog(format!(

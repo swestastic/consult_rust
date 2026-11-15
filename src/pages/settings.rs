@@ -120,6 +120,33 @@ impl ConsultApp {
                 ui.label("Choose what the Data Stream page requests and shows.");
                 ui.add_space(4.0);
 
+                // ECU-based filtering: once the connected ECU is identified,
+                // only items it is known to support are listed. The show-all
+                // toggle applies immediately and covers mislabeled ECUs.
+                let mut show_all = self.config.show_all_options;
+                if ui
+                    .checkbox(&mut show_all, "Show all options (ignore ECU filter)")
+                    .on_hover_text("The connected ECU's part number limits this list to known-working items. Enable to see everything.")
+                    .changed()
+                {
+                    self.config.show_all_options = show_all;
+                    let _ = self.config.save();
+                }
+                let filter = if show_all { None } else { self.ecu.clone() };
+                if let Some(info) = &filter {
+                    let hidden = catalog::CATALOG
+                        .iter()
+                        .filter(|sp| !info.supports(catalog::feature_of(sp.id)))
+                        .count();
+                    ui.label(format!(
+                        "Filtered to 23710-{}: {} — {} item(s) hidden.",
+                        info.part, info.summary, hidden
+                    ));
+                } else if self.ecu.is_none() && !show_all {
+                    ui.label("ECU not identified — showing all items.");
+                }
+                ui.add_space(4.0);
+
                 let s = &mut self.settings;
                 let selected = catalog::selected_specs(&s.items);
                 let used = catalog::register_count(&selected);
@@ -128,11 +155,21 @@ impl ConsultApp {
                     catalog::MAX_STREAM_REGISTERS
                 ));
 
+                let mut vis = 0usize;
+                let mut hidden_selected: Vec<&'static catalog::SensorSpec> = Vec::new();
                 egui::Grid::new("items_grid")
                     .num_columns(3)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        for (i, spec) in catalog::CATALOG.iter().enumerate() {
+                        for spec in catalog::CATALOG.iter() {
+                            if let Some(info) = &filter
+                                && !info.supports(catalog::feature_of(spec.id))
+                            {
+                                if s.items.iter().any(|id| id == spec.id) {
+                                    hidden_selected.push(spec);
+                                }
+                                continue;
+                            }
                             let mut on = s.items.iter().any(|id| id == spec.id);
                             let text = format!("{} ({})", spec.label, spec.regs_display());
                             let resp = ui.checkbox(&mut on, text);
@@ -153,11 +190,30 @@ impl ConsultApp {
                                 }
                             }
                             resp.on_hover_ui(|ui| spec_hover(ui, spec, s.speed_unit, s.temp_unit));
-                            if i % 3 == 2 {
+                            if vis % 3 == 2 {
                                 ui.end_row();
+                            }
+                            vis += 1;
+                        }
+                    });
+
+                // Selected items the filter hides keep streaming, but stay
+                // listed here so they can be turned off.
+                if !hidden_selected.is_empty() {
+                    ui.add_space(6.0);
+                    ui.colored_label(
+                        egui::Color32::from_rgb(230, 160, 60),
+                        "Selected but not listed for this ECU (still requested):",
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        for spec in hidden_selected {
+                            let mut on = true;
+                            if ui.checkbox(&mut on, spec.label).changed() && !on {
+                                s.items.retain(|id| id != spec.id);
                             }
                         }
                     });
+                }
 
                 ui.add_space(12.0);
                 if ui.button("Save").clicked() {

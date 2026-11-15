@@ -367,6 +367,22 @@ pub const DEFAULT_SELECTION: &[&str] = &[
     "rpm", "speed", "coolant", "battery", "tps", "maf", "aac", "inj_lh", "timing", "o2_lh",
 ];
 
+/// The ECU capability an item requires (see `ecuid`). The settings list
+/// hides gated items the identified ECU is not known to support; `Base`
+/// items are always shown.
+pub fn feature_of(spec_id: &str) -> crate::ecuid::Feature {
+    use crate::ecuid::Feature;
+    match spec_id {
+        "wastegate" | "boost" | "egt" => Feature::Turbo,
+        "o2_rh" | "inj_rh" | "alpha_rh" | "learn_rh" => Feature::VEngine,
+        "maf_rh" => Feature::TwinMaf,
+        "cas_ref" | "calld" | "rear_o2" | "abs_tps" | "maf_pct" | "abs_pressure" => {
+            Feature::Late96
+        }
+        _ => Feature::Base,
+    }
+}
+
 pub fn find_spec(id: &str) -> Option<&'static SensorSpec> {
     CATALOG.iter().find(|s| s.id == id)
 }

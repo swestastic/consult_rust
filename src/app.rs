@@ -188,6 +188,10 @@ pub struct ConsultApp {
     pub last_logged_seq: u64,
     pub logger: DataLogger,
     pub dtc: DtcState,
+    /// The connected ECU identified against the JWT core list (from the
+    /// part number read automatically at connect). None until identified
+    /// or when unlisted — in which case all options stay visible.
+    pub ecu: Option<crate::ecuid::EcuInfo>,
     pub testing: TestingState,
     pub romdump: RomDumpState,
     pub settings: SettingsState,
@@ -295,6 +299,7 @@ impl ConsultApp {
             last_logged_seq: 0,
             logger: DataLogger::new(),
             dtc: DtcState::default(),
+            ecu: None,
             testing: TestingState::default(),
             romdump: RomDumpState::default(),
             settings: SettingsState::default(),
@@ -333,6 +338,14 @@ impl ConsultApp {
         if let Some(link) = &self.link {
             link.send(cmd);
         }
+    }
+
+    /// Whether an item/test of the given feature family should be offered.
+    /// Everything shows when the show-all setting is on or the ECU is not
+    /// identified (unknown, unreadable, or not in the table).
+    pub fn feature_visible(&self, feature: crate::ecuid::Feature) -> bool {
+        self.config.show_all_options
+            || self.ecu.as_ref().is_none_or(|e| e.supports(feature))
     }
 
     pub fn refresh_ports(&mut self) {
@@ -412,6 +425,8 @@ impl ConsultApp {
         self.connecting_since = None;
         self.streaming = false;
         self.frame = None;
+        self.ecu = None;
+        self.dtc.part_number = None;
         self.logger.stop();
         self.reconnect_attempts = 0;
         self.reconnect_at = None;
@@ -514,6 +529,10 @@ impl ConsultApp {
                     self.reconnect_attempts = 0;
                     self.reconnect_at = None;
                     self.peaks.clear();
+                    // Fresh ECU: drop any previous identity and read the new
+                    // part number so the option filters can apply.
+                    self.ecu = None;
+                    self.dtc.part_number = None;
                     self.history.clear();
                     self.history_start = None;
                     // Remember the port that worked for the next launch.
@@ -533,6 +552,7 @@ impl ConsultApp {
                         self.send(LinkCommand::StartStream(regs));
                         self.streaming = true;
                     }
+                    self.send(LinkCommand::EcuInfo);
                 }
                 LinkEvent::StreamFrame(f) => {
                     self.frame = Some(f);
@@ -602,6 +622,7 @@ impl ConsultApp {
                 LinkEvent::PartNumber(p) => {
                     self.dtc.busy = false;
                     self.dtc.status = "ECU info received.".into();
+                    self.ecu = crate::ecuid::identify(&p);
                     self.dtc.part_number = Some(p);
                 }
                 LinkEvent::RawLog(line) => self.testing.push_log(line),

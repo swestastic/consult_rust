@@ -49,6 +49,10 @@ impl ConsultApp {
         if let Some(part) = &self.dtc.part_number {
             ui.add_space(4.0);
             ui.label(format!("ECU part number: {part}"));
+            match &self.ecu {
+                Some(info) => ui.label(format!("Identified: {}", info.summary)),
+                None => ui.label("Not in the ECU ID table — showing all options."),
+            };
         }
 
         ui.add_space(8.0);
