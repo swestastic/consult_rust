@@ -115,7 +115,7 @@ fn show_live_readouts(app: &mut ConsultApp, ui: &mut egui::Ui) {
             };
             ui.colored_label(dot, "\u{25CF}");
             ui.label(text);
-            ui.label("(set closed throttle to ~0.4 V with the switch ON)");
+            ui.label("(set closed throttle to ~0.45 V with the switch ON)");
         });
 
         ui.horizontal(|ui| {
@@ -124,7 +124,7 @@ fn show_live_readouts(app: &mut ConsultApp, ui: &mut egui::Ui) {
                 fmt_opt(get("timing"), 0, "°BTDC"),
                 fmt_opt(get("rpm"), 0, ""),
             ));
-            ui.label("(for base timing/idle, unplug the TPS connector to enter idle lockout)");
+            ui.label("(use Base idle / timing mode below instead of unplugging the TPS)");
         });
     });
 }
@@ -150,6 +150,39 @@ fn on_off_row(app: &mut ConsultApp, ui: &mut egui::Ui, label: &str, kind: u8) {
 }
 
 fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(RichText::new("Base idle / timing mode").strong());
+        ui.label(
+            "Holds the AAC valve and ignition timing at base — the software equivalent \
+             of unplugging the TPS — so base idle and timing can be set at the \
+             adjusters. Stays active until stopped.",
+        );
+        ui.horizontal(|ui| {
+            let active = app.testing.base_idle_active;
+            if ui.add_enabled(!active, egui::Button::new("Start")).clicked() {
+                app.send(LinkCommand::ActivateSet(vec![
+                    (activate::AAC, 0x00),
+                    (activate::IGN_TIMING, 0x00),
+                ]));
+                app.testing.base_idle_active = true;
+                app.testing
+                    .push_log("Base idle mode ON (AAC valve + timing held)".into());
+            }
+            if ui.add_enabled(active, egui::Button::new("Stop")).clicked() {
+                app.send(LinkCommand::CancelActivations);
+                app.testing.base_idle_active = false;
+                app.testing.push_log("Base idle mode OFF".into());
+            }
+            if active {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 90, 90),
+                    RichText::new("ACTIVE").strong(),
+                );
+            }
+        });
+    });
+
+    ui.add_space(6.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.label(RichText::new("Fuel pump relay").strong());
         ui.horizontal(|ui| {
@@ -214,6 +247,7 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.label(RichText::new("Manual adjustments").strong());
+        ui.label("Adjustments latch until cancelled (or you leave this page).");
 
         let temp_unit = app.config.temp_unit.label();
         let (lo, hi) = match app.config.temp_unit {
@@ -287,12 +321,22 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
         {
             app.send_activation(activate::CLEAR_SELF_LEARN, 0x00);
         }
+
+        if ui
+            .button("Cancel all active tests")
+            .on_hover_text("Sends STOP (0x30), cancelling every latched adjustment and override.")
+            .clicked()
+        {
+            app.send(LinkCommand::CancelActivations);
+            app.testing.base_idle_active = false;
+            app.testing.push_log("Cancelled all active tests".into());
+        }
     });
 
     ui.add_space(6.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.label(RichText::new("Solenoid / relay / fan tests").strong());
-        ui.label("Momentary output overrides; send OFF when done.");
+        ui.label("Overrides latch until you send OFF, cancel, or leave this page.");
         egui::Grid::new("onoff_grid").num_columns(3).show(ui, |ui| {
             on_off_row(app, ui, "IACV/FICD solenoid", activate::FICD_SOLENOID);
             on_off_row(app, ui, "P/Reg control solenoid", activate::PREG_SOLENOID);

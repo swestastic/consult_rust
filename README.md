@@ -28,7 +28,9 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
 - Active tests: fuel pump relay, power balance (per-cylinder cut), coolant temp
   bias, fuel trim, timing adjust, AAC adjust, IACV opening, clear self-learn,
   plus on/off overrides for the FICD/P-Reg/AAC-V/timing/MAP-SW solenoids and
-  the low/high coolant fans
+  the low/high coolant fans. Tests latch until cancelled with STOP (0x30), per
+  the protocol docs; a Base idle / timing mode holds the AAC valve and timing
+  so base idle can be set without unplugging the TPS
 - Raw hex command console
 - Test mode with simulated data (no hardware needed)
 - Unit selection (MPH/KPH, F/C), speedometer correction for tire/final-drive

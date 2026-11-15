@@ -16,6 +16,10 @@ pub enum LinkCommand {
     ClearDtc,
     EcuInfo,
     Activate { kind: u8, data: u8 },
+    /// Several activations in one write (protocol allows chaining).
+    ActivateSet(Vec<(u8, u8)>),
+    /// Send STOP, which also cancels all active test commands.
+    CancelActivations,
     Raw(Vec<u8>),
     Shutdown,
 }
@@ -109,6 +113,9 @@ fn serial_worker(
     let mut parser = FrameParser::new();
     let mut streaming = false;
     let mut stream_regs: Vec<u8> = Vec::new();
+    // Active test commands latch on the ECU until a STOP (0x30) cancels
+    // them, so we track whether a cancel is owed before closing.
+    let mut activation_active = false;
     let mut buf = [0u8; 512];
 
     loop {
@@ -116,7 +123,7 @@ fn serial_worker(
         loop {
             match cmd_rx.try_recv() {
                 Ok(LinkCommand::Shutdown) => {
-                    if streaming {
+                    if streaming || activation_active {
                         stop_and_drain(&mut *port, &mut parser);
                     }
                     return;
@@ -130,6 +137,42 @@ fn serial_worker(
                 Ok(LinkCommand::StopStream) => {
                     stop_and_drain(&mut *port, &mut parser);
                     streaming = false;
+                }
+                // Activations are fire-and-forget: no STOP afterwards, since
+                // STOP cancels the test (per the Issue 7 protocol doc). They
+                // can be sent mid-stream; echo bytes are skipped by the
+                // frame parser.
+                Ok(LinkCommand::Activate { kind, data }) => {
+                    let bytes = activation_command(kind, data);
+                    let _ = port.write_all(&bytes);
+                    let _ = port.flush();
+                    activation_active = true;
+                    let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
+                }
+                Ok(LinkCommand::ActivateSet(pairs)) => {
+                    let mut bytes = Vec::with_capacity(pairs.len() * 3 + 1);
+                    for (kind, data) in &pairs {
+                        bytes.extend_from_slice(&[CMD_ACTIVATE, *kind, *data]);
+                    }
+                    bytes.push(TERMINATOR);
+                    let _ = port.write_all(&bytes);
+                    let _ = port.flush();
+                    activation_active = true;
+                    let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
+                }
+                Ok(LinkCommand::CancelActivations) => {
+                    if activation_active {
+                        stop_and_drain(&mut *port, &mut parser);
+                        activation_active = false;
+                        // STOP also stopped the stream; restart it.
+                        if streaming {
+                            let _ = port.write_all(&build_stream_command(&stream_regs));
+                            let _ = port.flush();
+                        }
+                        let _ = evt.send(LinkEvent::RawLog(
+                            "TX: 30 (active tests cancelled)".into(),
+                        ));
+                    }
                 }
                 Ok(cmd) => {
                     if streaming {
@@ -240,9 +283,6 @@ fn run_query(
         LinkCommand::ReadDtc => (vec![CMD_READ_DTC, TERMINATOR], 3000, 600),
         LinkCommand::ClearDtc => (vec![CMD_CLEAR_DTC, TERMINATOR], 1500, 400),
         LinkCommand::EcuInfo => (vec![CMD_ECU_INFO, TERMINATOR], 1500, 400),
-        LinkCommand::Activate { kind, data } => {
-            (activation_command(*kind, *data).to_vec(), 600, 200)
-        }
         LinkCommand::Raw(b) => (b.clone(), 900, 300),
         _ => return,
     };
@@ -304,12 +344,6 @@ fn run_query(
                 .map(|f| format_part_number(f))
                 .unwrap_or_else(|| "(no response)".to_string());
             let _ = evt.send(LinkEvent::PartNumber(text));
-        }
-        LinkCommand::Activate { kind, data } => {
-            let _ = evt.send(LinkEvent::RawLog(format!(
-                "TX: {}",
-                to_hex(&activation_command(kind, data))
-            )));
         }
         LinkCommand::Raw(_) => {
             for f in &frames {
@@ -378,6 +412,19 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                         "Sim TX: {}",
                         to_hex(&activation_command(kind, data))
                     )));
+                }
+                LinkCommand::ActivateSet(pairs) => {
+                    let mut bytes = Vec::with_capacity(pairs.len() * 3 + 1);
+                    for (kind, data) in &pairs {
+                        bytes.extend_from_slice(&[CMD_ACTIVATE, *kind, *data]);
+                    }
+                    bytes.push(TERMINATOR);
+                    let _ = evt.send(LinkEvent::RawLog(format!("Sim TX: {}", to_hex(&bytes))));
+                }
+                LinkCommand::CancelActivations => {
+                    let _ = evt.send(LinkEvent::RawLog(
+                        "Sim TX: 30 (active tests cancelled)".into(),
+                    ));
                 }
                 LinkCommand::Raw(b) => {
                     let _ = evt.send(LinkEvent::RawLog(format!("Sim TX: {}", to_hex(&b))));

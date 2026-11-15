@@ -62,6 +62,8 @@ pub struct TestingState {
     /// SR20-style power balance: send 0x01-0x08 to cut one cylinder
     /// instead of a bitmask.
     pub pb_single_cyl: bool,
+    /// Base idle/timing mode is holding the AAC valve and timing.
+    pub base_idle_active: bool,
     pub fuel_trim_pct: f32,
     pub timing_deg: i32,
     pub aac_pct: f32,
@@ -76,6 +78,7 @@ impl Default for TestingState {
         TestingState {
             cylinders: [false; 8],
             pb_single_cyl: false,
+            base_idle_active: false,
             fuel_trim_pct: 0.0,
             timing_deg: 0,
             aac_pct: 0.0,
@@ -410,8 +413,10 @@ impl ConsultApp {
         // The Testing page runs its own small stream for the adjustment
         // readouts; stop it when leaving.
         if self.page == Page::Testing && self.connected() {
+            // The STOP also cancels any latched active tests.
             self.send(LinkCommand::StopStream);
             self.frame = None;
+            self.testing.base_idle_active = false;
         }
         if page == Page::DataStream && self.connected() && !self.streaming {
             let regs = self.config.stream_registers();
