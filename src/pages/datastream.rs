@@ -27,6 +27,19 @@ impl ConsultApp {
             .map(|s| frame.and_then(|f| s.decode(f, &regs, &cfg)))
             .collect();
 
+        // Track per-session peaks (max per item) from live values.
+        for (spec, val) in specs.iter().zip(&values) {
+            if catalog::is_digital(spec) {
+                continue;
+            }
+            if let Some(v) = val {
+                let peak = self.peaks.entry(spec.id).or_insert(*v);
+                if *v > *peak {
+                    *peak = *v;
+                }
+            }
+        }
+
         let rpm_warn = cfg.rpm_warning as f64;
         let temp_warn = cfg.coolant_warning_display();
 
@@ -60,6 +73,15 @@ impl ConsultApp {
                     self.send(LinkCommand::StartStream(self.config.stream_registers()));
                     self.streaming = true;
                 }
+
+                ui.separator();
+                if ui
+                    .button("Reset peaks")
+                    .on_hover_text("Clear the per-session peak (max) shown on each gauge")
+                    .clicked()
+                {
+                    self.peaks.clear();
+                }
             });
         });
 
@@ -86,7 +108,7 @@ impl ConsultApp {
                                 _ => false,
                             };
                             let (min, max) = spec.range_for(&cfg);
-                            gauge(
+                            let rect = gauge(
                                 ui,
                                 gsize,
                                 &spec.title(&cfg),
@@ -96,6 +118,15 @@ impl ConsultApp {
                                 spec.decimals,
                                 warn,
                             );
+                            if let Some(pk) = self.peaks.get(spec.id) {
+                                ui.painter_at(rect).text(
+                                    rect.right_top() + egui::vec2(-8.0, 6.0),
+                                    egui::Align2::RIGHT_TOP,
+                                    format!("pk {:.*}", spec.decimals, pk),
+                                    egui::FontId::proportional(10.0),
+                                    ui.visuals().weak_text_color(),
+                                );
+                            }
                             col += 1;
                             if col % cols == 0 {
                                 ui.end_row();

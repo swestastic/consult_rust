@@ -21,6 +21,8 @@ pub fn fit_columns(
 
 /// Semicircular dial gauge with ticks, needle, and a numeric readout.
 /// When `warn` is set the needle and value flash red.
+/// Returns the outer rect so callers can overlay small annotations.
+#[allow(clippy::too_many_arguments)]
 pub fn gauge(
     ui: &mut egui::Ui,
     size: egui::Vec2,
@@ -30,7 +32,7 @@ pub fn gauge(
     max: f64,
     decimals: usize,
     warn: bool,
-) {
+) -> egui::Rect {
     // Draw the border ourselves instead of using Frame::group: a frame adds
     // inner margins around the content, which would make the widget wider
     // than the computed cell size and break the right-edge padding math.
@@ -120,6 +122,7 @@ pub fn gauge(
         egui::FontId::new(19.0, egui::FontFamily::Proportional),
         value_color,
     );
+    outer
 }
 
 pub const SERIES_COLORS: [Color32; 9] = [

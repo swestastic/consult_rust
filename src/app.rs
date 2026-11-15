@@ -127,6 +127,9 @@ pub struct ConsultApp {
     pub testing: TestingState,
     pub settings: SettingsState,
     pub replay: ReplayState,
+    /// Per-item session peak (max) values, keyed by catalog id. Cleared on
+    /// connect and from the Data Stream controls.
+    pub peaks: std::collections::HashMap<&'static str, f64>,
 }
 
 pub struct ReplayState {
@@ -218,6 +221,7 @@ impl ConsultApp {
             testing: TestingState::default(),
             settings: SettingsState::default(),
             replay: ReplayState::default(),
+            peaks: std::collections::HashMap::new(),
         };
         app.refresh_ports();
         app.load_settings_buffer();
@@ -357,6 +361,7 @@ impl ConsultApp {
                 LinkEvent::Connected => {
                     self.conn = ConnState::Connected;
                     self.connecting_since = None;
+                    self.peaks.clear();
                     self.status = if self.test_mode() {
                         "Test mode: simulated data.".into()
                     } else {
