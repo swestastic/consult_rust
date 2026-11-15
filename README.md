@@ -20,7 +20,9 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
   (works without an ECU connection)
 - DTC read/erase with code descriptions, ECU part number readout
 - Active tests: fuel pump relay, power balance (per-cylinder cut), coolant temp
-  bias, fuel trim, timing adjust, AAC adjust, clear self-learn
+  bias, fuel trim, timing adjust, AAC adjust, IACV opening, clear self-learn,
+  plus on/off overrides for the FICD/P-Reg/AAC-V/timing/MAP-SW solenoids and
+  the low/high coolant fans
 - Raw hex command console
 - Test mode with simulated data (no hardware needed)
 - Unit selection (MPH/KPH, F/C), speedometer correction for tire/final-drive

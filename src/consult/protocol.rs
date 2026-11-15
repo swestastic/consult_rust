@@ -23,9 +23,17 @@ pub mod activate {
     pub const FUEL_TRIM: u8 = 0x81; // data = 100 + percent (0x64 = normal)
     pub const IGN_TIMING: u8 = 0x82; // data = signed degrees, +1 per degree
     pub const AAC: u8 = 0x84; // data = signed, +1 per 0.5%
+    pub const IACV_OPENING: u8 = 0x85; // data = 0x00..0x8C = 0..100%
+    pub const FICD_SOLENOID: u8 = 0x87; // data = 0x00 off, 0x01 on
     pub const POWER_BALANCE: u8 = 0x88; // data = cylinder bitmask, 1 = off
     pub const FUEL_PUMP: u8 = 0x89; // data = 0x00 on, 0x01 off (some ECUs inverted)
+    pub const PREG_SOLENOID: u8 = 0x8A; // data = 0x00 off, 0x01 on
     pub const CLEAR_SELF_LEARN: u8 = 0x8B; // data = 0x00
+    pub const AACV_CONTROL_VALVE: u8 = 0x8C; // data = 0x00 off, 0x01 on
+    pub const TIMING_SOLENOID: u8 = 0x8F; // data = 0x00 off, 0x01 on
+    pub const MAP_SW_SOLENOID: u8 = 0x90; // data = 0x00 off, 0x01 on
+    pub const FAN_LOW: u8 = 0x93; // data = 0x00 off, 0x01 on
+    pub const FAN_HIGH: u8 = 0x94; // data = 0x00 off, 0x01 on
 }
 
 pub fn init_sequence(ecu_address: u8) -> [u8; 3] {
