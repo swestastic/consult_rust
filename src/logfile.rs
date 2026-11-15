@@ -4,6 +4,32 @@
 
 use std::path::Path;
 
+/// Open the logs directory in the OS file manager.
+pub fn open_logs_folder() -> Result<(), String> {
+    std::fs::create_dir_all("logs").map_err(|e| format!("Cannot create logs dir: {e}"))?;
+    let abs = std::fs::canonicalize("logs").map_err(|e| e.to_string())?;
+    let mut path = abs.to_string_lossy().into_owned();
+    // Explorer doesn't understand the \\?\ verbatim prefix.
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(stripped) = path.strip_prefix(r"\\?\") {
+            path = stripped.to_string();
+        }
+    }
+    let (cmd, arg): (&str, &str) = if cfg!(target_os = "windows") {
+        ("explorer", &path)
+    } else if cfg!(target_os = "macos") {
+        ("open", &path)
+    } else {
+        ("xdg-open", &path)
+    };
+    std::process::Command::new(cmd)
+        .arg(arg)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Cannot launch {cmd}: {e}"))
+}
+
 #[derive(Clone, Default)]
 pub struct LogFile {
     pub name: String,

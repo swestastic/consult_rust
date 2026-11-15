@@ -38,6 +38,16 @@ impl ConsultApp {
                 self.refresh_log_files();
             }
             if ui
+                .button("Open Folder")
+                .on_hover_text("Open the logs folder in the file manager")
+                .clicked()
+            {
+                match crate::logfile::open_logs_folder() {
+                    Ok(()) => self.replay.status = "Opened logs folder.".into(),
+                    Err(e) => self.replay.status = e,
+                }
+            }
+            if ui
                 .add_enabled(
                     self.replay.selected_file.is_some(),
                     egui::Button::new("Load"),
