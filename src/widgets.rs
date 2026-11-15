@@ -2,13 +2,39 @@
 
 use egui::{Color32, Pos2, Stroke, vec2};
 
+/// Responsive column layout: as many columns as fit at `min_item_width`
+/// (up to `max_cols`), with each item stretched to fill the available
+/// width (up to `max_item_width`). Returns (columns, item width).
+pub fn fit_columns(
+    avail_width: f32,
+    min_item_width: f32,
+    max_item_width: f32,
+    max_cols: usize,
+    spacing: f32,
+) -> (usize, f32) {
+    let cols = ((avail_width + spacing) / (min_item_width + spacing)).floor() as usize;
+    let cols = cols.clamp(1, max_cols);
+    let width = ((avail_width - spacing * (cols.saturating_sub(1)) as f32) / cols as f32)
+        .min(max_item_width);
+    (cols, width)
+}
+
 /// Semicircular dial gauge with ticks, needle, and a numeric readout.
 /// When `warn` is set the needle and value flash red.
-pub fn gauge(ui: &mut egui::Ui, title: &str, value: f64, min: f64, max: f64, decimals: usize, warn: bool) {
+pub fn gauge(
+    ui: &mut egui::Ui,
+    size: egui::Vec2,
+    title: &str,
+    value: f64,
+    min: f64,
+    max: f64,
+    decimals: usize,
+    warn: bool,
+) {
     egui::Frame::group(ui.style())
         .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
         .show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(230.0, 175.0), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             let painter = ui.painter_at(rect);
 
             let center = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.72);

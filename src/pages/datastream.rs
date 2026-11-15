@@ -6,7 +6,7 @@ use egui::{Color32, RichText};
 use crate::app::ConsultApp;
 use crate::catalog;
 use crate::consult::link::LinkCommand;
-use crate::widgets::gauge;
+use crate::widgets::{self, gauge};
 
 impl ConsultApp {
     pub(crate) fn show_datastream(&mut self, ui: &mut egui::Ui) {
@@ -28,8 +28,12 @@ impl ConsultApp {
         let temp_warn = cfg.coolant_warning_display();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
+            let avail = ui.available_width();
+            let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
+            let gsize = egui::vec2(gw, gw / 1.31);
+
             egui::Grid::new("gauges")
-                .num_columns(3)
+                .num_columns(cols)
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
                     let mut col = 0;
@@ -44,9 +48,9 @@ impl ConsultApp {
                             _ => false,
                         };
                         let (min, max) = spec.range_for(&cfg);
-                        gauge(ui, &spec.title(&cfg), v, min, max, spec.decimals, warn);
+                        gauge(ui, gsize, &spec.title(&cfg), v, min, max, spec.decimals, warn);
                         col += 1;
-                        if col % 3 == 0 {
+                        if col % cols == 0 {
                             ui.end_row();
                         }
                     }
@@ -63,13 +67,14 @@ impl ConsultApp {
                 ui.add_space(10.0);
                 ui.label(RichText::new("Digital Registers").strong());
                 ui.add_space(4.0);
+                let (dcols, dw) = widgets::fit_columns(avail, 260.0, 420.0, 4, 12.0);
                 egui::Grid::new("digital_region")
-                    .num_columns(3)
+                    .num_columns(dcols)
                     .spacing([12.0, 12.0])
                     .show(ui, |ui| {
                         for (i, (spec, val)) in digital.iter().enumerate() {
-                            digital_panel(ui, spec, *val);
-                            if i % 3 == 2 {
+                            digital_panel(ui, spec, *val, dw);
+                            if (i + 1) % dcols == 0 {
                                 ui.end_row();
                             }
                         }
@@ -121,8 +126,8 @@ impl ConsultApp {
 
 /// Compact indicator panel for one digital bit register: 8 bits in two
 /// columns, green dot + name when set, dim when clear.
-fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f64>) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(230.0, 124.0), egui::Sense::hover());
+fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f64>, width: f32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 124.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let dim = ui.visuals().weak_text_color();
     let fg = ui.visuals().text_color();

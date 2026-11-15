@@ -155,16 +155,20 @@ impl ConsultApp {
             // ---- Gauges / value boxes for known columns
             let rpm_warn = self.config.rpm_warning as f64;
             let temp_warn = self.config.coolant_warning_display();
+            let avail = ui.available_width();
+            let (cols, gw) = widgets::fit_columns(avail, 250.0, 360.0, 6, 12.0);
+            let gsize = egui::vec2(gw, gw / 1.31);
+            let vsize = egui::vec2(gw, 60.0);
             ui.add_space(4.0);
             egui::Grid::new("replay_gauges")
-                .num_columns(3)
+                .num_columns(cols)
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
                     for (i, name) in columns.iter().enumerate() {
                         let v = values.get(i).copied().unwrap_or(0.0);
                         match catalog::spec_for_column(name) {
                             Some(spec) if spec.unit == catalog::UnitKind::Raw => {
-                                value_box(ui, name, v, 0);
+                                value_box(ui, name, v, 0, vsize);
                             }
                             Some(spec) => {
                                 let (min, max) = spec.range_in(&speed_unit, &temp_unit);
@@ -173,11 +177,11 @@ impl ConsultApp {
                                     "coolant" => v >= temp_warn,
                                     _ => false,
                                 };
-                                widgets::gauge(ui, name, v, min, max, spec.decimals, warn);
+                                widgets::gauge(ui, gsize, name, v, min, max, spec.decimals, warn);
                             }
-                            None => value_box(ui, name, v, 2),
+                            None => value_box(ui, name, v, 2, vsize),
                         }
-                        if i % 3 == 2 {
+                        if (i + 1) % cols == 0 {
                             ui.end_row();
                         }
                     }
@@ -228,11 +232,11 @@ impl ConsultApp {
 }
 
 /// Plain value box for columns without a known gauge.
-fn value_box(ui: &mut egui::Ui, title: &str, value: f64, decimals: usize) {
+fn value_box(ui: &mut egui::Ui, title: &str, value: f64, decimals: usize, size: egui::Vec2) {
     egui::Frame::group(ui.style())
         .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
         .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(230.0, 60.0));
+            ui.set_min_size(size);
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new(title).weak());
                 ui.label(
