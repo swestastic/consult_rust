@@ -59,6 +59,9 @@ impl Default for DtcState {
 
 pub struct TestingState {
     pub cylinders: [bool; 8],
+    /// SR20-style power balance: send 0x01-0x08 to cut one cylinder
+    /// instead of a bitmask.
+    pub pb_single_cyl: bool,
     pub fuel_trim_pct: f32,
     pub timing_deg: i32,
     pub aac_pct: f32,
@@ -72,6 +75,7 @@ impl Default for TestingState {
     fn default() -> Self {
         TestingState {
             cylinders: [false; 8],
+            pb_single_cyl: false,
             fuel_trim_pct: 0.0,
             timing_deg: 0,
             aac_pct: 0.0,

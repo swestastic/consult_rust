@@ -42,7 +42,17 @@ impl ConsultApp {
             k if k == activate::FUEL_PUMP => {
                 format!("Fuel pump {}", if data == 0x00 { "ON" } else { "OFF" })
             }
-            k if k == activate::POWER_BALANCE => format!("Power balance mask 0x{data:02X}"),
+            k if k == activate::POWER_BALANCE => {
+                if self.testing.pb_single_cyl {
+                    if data == 0 {
+                        "Power balance: all cylinders on".to_string()
+                    } else {
+                        format!("Power balance: cut cylinder {data}")
+                    }
+                } else {
+                    format!("Power balance mask 0x{data:02X}")
+                }
+            }
             k if k == activate::COOLANT_TEMP => {
                 format!("Coolant temp test: {} C", data as i32 - 50)
             }
@@ -152,26 +162,44 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.label(RichText::new("Power balance (cylinder cut)").strong());
-        let mut changed = false;
+        if ui
+            .checkbox(
+                &mut app.testing.pb_single_cyl,
+                "SR20-style single-cylinder select",
+            )
+            .on_hover_text(
+                "Some ECUs (SR20 etc.) take 0x01-0x08 to select one cylinder \
+                 instead of a bitmask.",
+            )
+            .changed()
+        {
+            app.testing.cylinders = [false; 8];
+            app.send_activation(activate::POWER_BALANCE, 0x00);
+        }
+        let single = app.testing.pb_single_cyl;
         for i in 0..8 {
+            let mut on = app.testing.cylinders[i];
             if ui
-                .checkbox(
-                    &mut app.testing.cylinders[i],
-                    format!("Disable cylinder {}", i + 1),
-                )
+                .checkbox(&mut on, format!("Disable cylinder {}", i + 1))
                 .changed()
             {
-                changed = true;
+                if single {
+                    // Radio behavior: one cylinder at a time, value = index+1.
+                    app.testing.cylinders = [false; 8];
+                    app.testing.cylinders[i] = on;
+                    let data = if on { (i + 1) as u8 } else { 0x00 };
+                    app.send_activation(activate::POWER_BALANCE, data);
+                } else {
+                    app.testing.cylinders[i] = on;
+                    let mask = app
+                        .testing
+                        .cylinders
+                        .iter()
+                        .enumerate()
+                        .fold(0u8, |m, (i, off)| if *off { m | (1 << i) } else { m });
+                    app.send_activation(activate::POWER_BALANCE, mask);
+                }
             }
-        }
-        if changed {
-            let mask = app
-                .testing
-                .cylinders
-                .iter()
-                .enumerate()
-                .fold(0u8, |m, (i, off)| if *off { m | (1 << i) } else { m });
-            app.send_activation(activate::POWER_BALANCE, mask);
         }
         if ui.button("All cylinders on").clicked() {
             app.testing.cylinders = [false; 8];
