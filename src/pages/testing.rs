@@ -3,8 +3,13 @@
 use egui::RichText;
 
 use crate::app::ConsultApp;
+use crate::catalog;
 use crate::consult::link::LinkCommand;
 use crate::consult::protocol::{self, activate};
+
+/// Registers streamed while the Testing page is open, feeding the live
+/// adjustment readouts: RPM MSB/LSB, TPS, digital 0x13, ignition timing.
+pub(crate) const HELPER_REGS: [u8; 5] = [0x00, 0x01, 0x0D, 0x13, 0x16];
 
 impl ConsultApp {
     pub(crate) fn show_testing(&mut self, ui: &mut egui::Ui) {
@@ -20,6 +25,9 @@ impl ConsultApp {
             )
             .color(egui::Color32::from_rgb(230, 160, 60)),
         );
+        ui.add_space(6.0);
+
+        show_live_readouts(self, ui);
         ui.add_space(6.0);
 
         ui.columns(2, |cols| {
@@ -69,6 +77,50 @@ impl ConsultApp {
 
 fn on_off(data: u8) -> &'static str {
     if data == 0x00 { "OFF" } else { "ON" }
+}
+
+/// Live readouts for the under-hood adjustment workflows: TPS adjustment
+/// (closed-throttle switch + sensor voltage) and base timing/idle.
+fn show_live_readouts(app: &mut ConsultApp, ui: &mut egui::Ui) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(RichText::new("Live adjustment readouts").strong());
+        let frame: Option<&[u8]> = app.frame.as_deref();
+        let cfg = &app.config;
+        let get = |id: &str| {
+            catalog::find_spec(id).and_then(|s| frame.and_then(|f| s.decode(f, &HELPER_REGS, cfg)))
+        };
+
+        ui.horizontal(|ui| {
+            let tps = get("tps");
+            ui.label(format!("TPS: {}", fmt_opt(tps, 2, "V")));
+            let closed = get("d13").is_some_and(|v| v as u8 & 1 != 0);
+            let (dot, text) = if closed {
+                (egui::Color32::from_rgb(80, 220, 100), "closed-throttle switch ON")
+            } else {
+                (egui::Color32::from_rgb(70, 70, 70), "closed-throttle switch OFF")
+            };
+            ui.colored_label(dot, "\u{25CF}");
+            ui.label(text);
+            ui.label("(set closed throttle to ~0.4 V with the switch ON)");
+        });
+
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "Timing: {}   RPM: {}",
+                fmt_opt(get("timing"), 0, "°BTDC"),
+                fmt_opt(get("rpm"), 0, ""),
+            ));
+            ui.label("(for base timing/idle, unplug the TPS connector to enter idle lockout)");
+        });
+    });
+}
+
+fn fmt_opt(v: Option<f64>, decimals: usize, unit: &str) -> String {
+    match v {
+        Some(v) if unit.is_empty() => format!("{v:.decimals$}"),
+        Some(v) => format!("{v:.decimals$} {unit}"),
+        None => "--".into(),
+    }
 }
 
 /// ON/OFF button pair for a solenoid/relay activation (0x01 = on, 0x00 = off).

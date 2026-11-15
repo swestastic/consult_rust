@@ -315,6 +315,12 @@ impl ConsultApp {
             self.send(LinkCommand::StopStream);
             self.streaming = false;
         }
+        // The Testing page runs its own small stream for the adjustment
+        // readouts; stop it when leaving.
+        if self.page == Page::Testing && self.connected() {
+            self.send(LinkCommand::StopStream);
+            self.frame = None;
+        }
         if page == Page::DataStream && self.connected() && !self.streaming {
             let regs = self.config.stream_registers();
             self.send(LinkCommand::StartStream(regs));
@@ -329,6 +335,12 @@ impl ConsultApp {
         }
         if page == Page::Testing {
             self.testing.temp_display = self.config.display_temp(80.0) as f32;
+            if self.connected() {
+                self.send(LinkCommand::StartStream(
+                    crate::pages::testing::HELPER_REGS.to_vec(),
+                ));
+                self.frame = None;
+            }
         }
         self.page = page;
     }
