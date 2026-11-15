@@ -334,14 +334,14 @@ impl ConsultApp {
             }
             return;
         }
-        let addr = match self.config.ecu_address_byte() {
-            Ok(a) => a,
+        let candidates = match self.config.ecu_address_candidates() {
+            Ok(c) => c,
             Err(e) => {
                 self.status = e;
                 return;
             }
         };
-        match LinkHandle::connect(self.selected_port.clone(), addr, self.evt_tx.clone()) {
+        match LinkHandle::connect(self.selected_port.clone(), candidates, self.evt_tx.clone()) {
             Ok(link) => {
                 self.link = Some(link);
                 self.conn = ConnState::Connecting;

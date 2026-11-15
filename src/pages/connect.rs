@@ -46,10 +46,14 @@ impl ConsultApp {
                 ui.end_row();
 
                 ui.label("ECU address:");
-                ui.label(format!(
-                    "0x{} (change in Settings; most pre-'96 ECUs use EF)",
-                    self.config.ecu_address
-                ));
+                ui.label(if self.config.ecu_address.eq_ignore_ascii_case("auto") {
+                    "AUTO (tries EF, then ED)".to_string()
+                } else {
+                    format!(
+                        "0x{} (change in Settings; most pre-'96 ECUs use EF)",
+                        self.config.ecu_address
+                    )
+                });
                 ui.end_row();
             });
 

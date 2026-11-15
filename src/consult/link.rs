@@ -43,13 +43,13 @@ impl LinkHandle {
 
     pub fn connect(
         port_name: String,
-        ecu_address: u8,
+        ecu_candidates: Vec<u8>,
         evt_tx: Sender<LinkEvent>,
     ) -> std::io::Result<LinkHandle> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let join = std::thread::Builder::new()
             .name("consult-link".into())
-            .spawn(move || serial_worker(port_name, ecu_address, evt_tx, cmd_rx))?;
+            .spawn(move || serial_worker(port_name, ecu_candidates, evt_tx, cmd_rx))?;
         Ok(LinkHandle {
             cmd_tx,
             join: Some(join),
@@ -83,7 +83,7 @@ impl Drop for LinkHandle {
 
 fn serial_worker(
     port_name: String,
-    ecu_address: u8,
+    ecu_candidates: Vec<u8>,
     evt: Sender<LinkEvent>,
     cmd_rx: Receiver<LinkCommand>,
 ) {
@@ -98,7 +98,7 @@ fn serial_worker(
         }
     };
 
-    if let Err(e) = handshake(&mut *port, ecu_address) {
+    if let Err(e) = handshake(&mut *port, &ecu_candidates) {
         let _ = evt.send(LinkEvent::Error(e));
         return;
     }
@@ -175,28 +175,35 @@ fn serial_worker(
     }
 }
 
-fn handshake(port: &mut dyn SerialPort, ecu_address: u8) -> Result<(), String> {
-    let expected = expected_init_reply(ecu_address);
-    for _ in 0..3 {
-        let _ = port.clear(serialport::ClearBuffer::All);
-        port.write_all(&init_sequence(ecu_address))
-            .map_err(|e| format!("Init write failed: {e}"))?;
-        let _ = port.flush();
-        std::thread::sleep(Duration::from_millis(100));
+fn handshake(port: &mut dyn SerialPort, candidates: &[u8]) -> Result<(), String> {
+    for &ecu_address in candidates {
+        let expected = expected_init_reply(ecu_address);
+        for _ in 0..3 {
+            let _ = port.clear(serialport::ClearBuffer::All);
+            port.write_all(&init_sequence(ecu_address))
+                .map_err(|e| format!("Init write failed: {e}"))?;
+            let _ = port.flush();
+            std::thread::sleep(Duration::from_millis(100));
 
-        let deadline = Instant::now() + Duration::from_millis(900);
-        let mut b = [0u8; 1];
-        while Instant::now() < deadline {
-            match port.read(&mut b) {
-                Ok(1) if b[0] == expected => return Ok(()),
-                Ok(_) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => return Err(format!("Init read failed: {e}")),
+            let deadline = Instant::now() + Duration::from_millis(900);
+            let mut b = [0u8; 1];
+            while Instant::now() < deadline {
+                match port.read(&mut b) {
+                    Ok(1) if b[0] == expected => return Ok(()),
+                    Ok(_) => {}
+                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(e) => return Err(format!("Init read failed: {e}")),
+                }
             }
         }
     }
+    let tried = candidates
+        .iter()
+        .map(|a| format!("0x{a:02X}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     Err(format!(
-        "No ECU response (expected reply 0x{expected:02X}). Check cable, ignition, and ECU address."
+        "No ECU response (tried {tried}). Check cable, ignition, and ECU address."
     ))
 }
 

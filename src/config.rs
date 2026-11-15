@@ -143,6 +143,15 @@ impl Config {
         })
     }
 
+    /// Init addresses to try at connect: "AUTO" probes the common ones
+    /// (EF for most ECUs, ED for many '96+), otherwise just the one given.
+    pub fn ecu_address_candidates(&self) -> Result<Vec<u8>, String> {
+        if self.ecu_address.trim().eq_ignore_ascii_case("auto") {
+            return Ok(vec![0xEF, 0xED]);
+        }
+        self.ecu_address_byte().map(|b| vec![b])
+    }
+
     /// Indicated kph -> display-unit, corrected speed.
     pub fn display_speed(&self, kph: f64) -> f64 {
         let corrected = kph * self.speed_correction();

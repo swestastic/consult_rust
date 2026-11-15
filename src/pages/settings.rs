@@ -75,7 +75,7 @@ impl ConsultApp {
 
                         ui.label("ECU address (hex):");
                         ui.add(egui::TextEdit::singleline(&mut s.ecu_address).desired_width(80.0));
-                        ui.label("EF for most ECUs; ED for many '96+");
+                        ui.label("EF for most ECUs; ED for many '96+; AUTO to probe both");
                         ui.end_row();
                     });
 
@@ -204,7 +204,7 @@ impl ConsultApp {
         cfg.stock_final_drive = f("Stock final drive", &s.stock_final)?;
         cfg.new_final_drive = f("New final drive", &s.new_final)?;
         cfg.ecu_address = s.ecu_address.trim().to_uppercase();
-        cfg.ecu_address_byte()?; // validate
+        cfg.ecu_address_candidates()?; // validate
 
         let new_items = catalog::sanitize_selection(s.items.clone());
         let selection_changed = new_items != cfg.display_items;
