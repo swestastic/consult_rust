@@ -362,9 +362,11 @@ pub const CATALOG: &[SensorSpec] = &[
     },
 ];
 
-/// What a fresh install displays (the original 8 gauges + MAF and O2).
+/// What a fresh install displays (the original 8 gauges + MAF, O2, and the
+/// digital bit registers).
 pub const DEFAULT_SELECTION: &[&str] = &[
     "rpm", "speed", "coolant", "battery", "tps", "maf", "aac", "inj_lh", "timing", "o2_lh",
+    "d13", "d1e", "d1f", "d21",
 ];
 
 /// The ECU capability an item requires (see `ecuid`). The settings list
@@ -635,8 +637,8 @@ mod tests {
     fn default_selection_fits() {
         let ids: Vec<String> = DEFAULT_SELECTION.iter().map(|s| s.to_string()).collect();
         let specs = selected_specs(&ids);
-        assert_eq!(specs.len(), 10);
-        assert_eq!(register_count(&specs), 13);
+        assert_eq!(specs.len(), 14);
+        assert_eq!(register_count(&specs), 17);
         assert!(register_count(&specs) <= MAX_STREAM_REGISTERS);
     }
 
