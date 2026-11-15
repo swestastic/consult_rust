@@ -63,11 +63,17 @@ impl ConsultApp {
                 ui.add_space(10.0);
                 ui.label(RichText::new("Digital Registers").strong());
                 ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    for (spec, val) in digital {
-                        digital_panel(ui, spec, val);
-                    }
-                });
+                egui::Grid::new("digital_region")
+                    .num_columns(3)
+                    .spacing([12.0, 12.0])
+                    .show(ui, |ui| {
+                        for (i, (spec, val)) in digital.iter().enumerate() {
+                            digital_panel(ui, spec, *val);
+                            if i % 3 == 2 {
+                                ui.end_row();
+                            }
+                        }
+                    });
             }
         });
 
@@ -119,6 +125,7 @@ fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f6
     egui::Frame::group(ui.style())
         .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
         .show(ui, |ui| {
+            ui.set_min_width(230.0);
             ui.label(RichText::new(spec.label).strong().small());
             let byte = value.map(|v| v as u8);
             egui::Grid::new(format!("dig_{}", spec.id))
