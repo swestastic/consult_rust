@@ -143,6 +143,56 @@ pub fn parse_dtc_frames(frames: &[Vec<u8>]) -> Vec<(u8, u8)> {
     out
 }
 
+/// Assemble a readable ECU part number from a 0xD0 response frame.
+/// Generic ECUs send 22 bytes containing an ASCII `... 23710-YYYYYY`
+/// run; '96+ ECUs send 32 bytes with the version in the last 5 bytes.
+/// Falls back to whatever printable ASCII the frame contains.
+pub fn format_part_number(frame: &[u8]) -> String {
+    let ascii: String = frame
+        .iter()
+        .filter(|b| b.is_ascii_graphic() || **b == b' ')
+        .map(|b| *b as char)
+        .collect();
+    let trimmed = ascii.trim();
+    if trimmed.is_empty() {
+        return "(no response)".to_string();
+    }
+    if let Some(pos) = trimmed.find("23710") {
+        let before = trimmed[..pos].trim_end();
+        let prefix: String = before
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let version: String = trimmed[pos + 5..]
+            .trim_start_matches(['-', ' '])
+            .chars()
+            .take(6)
+            .collect();
+        if !version.is_empty() {
+            return if prefix.is_empty() {
+                format!("23710-{version}")
+            } else {
+                format!("{prefix} 23710-{version}")
+            };
+        }
+    }
+    if frame.len() == 32 {
+        let tail: String = frame[27..]
+            .iter()
+            .filter(|b| b.is_ascii_graphic())
+            .map(|b| *b as char)
+            .collect();
+        if !tail.is_empty() {
+            return format!("version {tail}");
+        }
+    }
+    trimmed.to_string()
+}
+
 /// Classic Nissan Consult self-diagnosis codes (two-digit hex, e.g. 0x13).
 pub fn dtc_description(code: u8) -> &'static str {
     match code {
@@ -249,5 +299,22 @@ mod tests {
         assert_eq!(parse_hex("5A 01 f0").unwrap(), vec![0x5A, 0x01, 0xF0]);
         assert_eq!(parse_hex("5a01F0").unwrap(), vec![0x5A, 0x01, 0xF0]);
         assert!(parse_hex("5A1").is_err());
+    }
+
+    #[test]
+    fn part_number_formats() {
+        // Generic 22-byte frame with the part number as ASCII.
+        let mut frame = vec![0u8; 22];
+        let text = b"0488 23710-50F00";
+        frame[3..3 + text.len()].copy_from_slice(text);
+        assert_eq!(format_part_number(&frame), "0488 23710-50F00");
+
+        // '96+ 32-byte frame: version is the last 5 bytes.
+        let mut frame = vec![0u8; 32];
+        frame[27..].copy_from_slice(b"4L618");
+        assert_eq!(format_part_number(&frame), "version 4L618");
+
+        // No printable content at all.
+        assert_eq!(format_part_number(&[0x01, 0x02]), "(no response)");
     }
 }

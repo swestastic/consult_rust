@@ -294,13 +294,7 @@ fn run_query(
         LinkCommand::EcuInfo => {
             let text = frames
                 .first()
-                .map(|f| {
-                    f.iter()
-                        .filter(|b| b.is_ascii_graphic() || **b == b' ')
-                        .map(|b| *b as char)
-                        .collect::<String>()
-                })
-                .filter(|s| !s.trim().is_empty())
+                .map(|f| format_part_number(f))
                 .unwrap_or_else(|| "(no response)".to_string());
             let _ = evt.send(LinkEvent::PartNumber(text));
         }
