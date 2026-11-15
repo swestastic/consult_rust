@@ -42,6 +42,7 @@ impl ConsultApp {
 
         let rpm_warn = cfg.rpm_warning as f64;
         let temp_warn = cfg.coolant_warning_display();
+        let batt_warn = cfg.battery_low_v;
 
         // Controls docked to the bottom of the page so they are always
         // visible regardless of scroll position or window height.
@@ -120,11 +121,13 @@ impl ConsultApp {
                                 continue; // rendered in the digital region below
                             }
                             let v = val.unwrap_or(0.0);
-                            let warn = match spec.id {
-                                "rpm" => v >= rpm_warn,
-                                "coolant" => v >= temp_warn,
-                                _ => false,
-                            };
+                            let warn = val.is_some()
+                                && match spec.id {
+                                    "rpm" => v >= rpm_warn,
+                                    "coolant" => v >= temp_warn,
+                                    "battery" => v <= batt_warn,
+                                    _ => false,
+                                };
                             let (min, max) = spec.range_for(&cfg);
                             let rect = gauge(
                                 ui,

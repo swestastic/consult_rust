@@ -13,6 +13,7 @@ impl ConsultApp {
             temp_unit: c.temp_unit,
             rpm_warning: c.rpm_warning.to_string(),
             coolant_warning: format!("{:.1}", c.coolant_warning_display()),
+            battery_low: format!("{:.1}", c.battery_low_v),
             stock_width: fmt(c.stock_tire.width_mm),
             stock_aspect: fmt(c.stock_tire.aspect),
             stock_rim: fmt(c.stock_tire.rim_in),
@@ -65,6 +66,11 @@ impl ConsultApp {
                             egui::TextEdit::singleline(&mut s.coolant_warning).desired_width(80.0),
                         );
                         ui.label(format!("°{}", s.temp_unit.label()));
+                        ui.end_row();
+
+                        ui.label("Battery warning (V):");
+                        ui.add(egui::TextEdit::singleline(&mut s.battery_low).desired_width(80.0));
+                        ui.label("warns below this voltage");
                         ui.end_row();
 
                         ui.label("ECU address (hex):");
@@ -188,6 +194,7 @@ impl ConsultApp {
         cfg.temp_unit = s.temp_unit;
         cfg.rpm_warning = rpm_warning;
         cfg.coolant_warning_c = cfg.temp_to_c(f("Coolant warning", &s.coolant_warning)?);
+        cfg.battery_low_v = f("Battery warning", &s.battery_low)?;
         cfg.stock_tire.width_mm = f("Stock tire width", &s.stock_width)?;
         cfg.stock_tire.aspect = f("Stock aspect ratio", &s.stock_aspect)?;
         cfg.stock_tire.rim_in = f("Stock rim", &s.stock_rim)?;

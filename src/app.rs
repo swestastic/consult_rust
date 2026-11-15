@@ -99,6 +99,7 @@ impl TestingState {
 pub struct SettingsState {
     pub rpm_warning: String,
     pub coolant_warning: String,
+    pub battery_low: String,
     pub stock_width: String,
     pub stock_aspect: String,
     pub stock_rim: String,
