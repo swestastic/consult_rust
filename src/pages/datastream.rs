@@ -32,24 +32,43 @@ impl ConsultApp {
                 .num_columns(3)
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
-                    for (i, (spec, val)) in specs.iter().zip(&values).enumerate() {
+                    let mut col = 0;
+                    for (spec, val) in specs.iter().zip(&values) {
+                        if catalog::is_digital(spec) {
+                            continue; // rendered in the digital region below
+                        }
                         let v = val.unwrap_or(0.0);
                         let warn = match spec.id {
                             "rpm" => v >= rpm_warn,
                             "coolant" => v >= temp_warn,
                             _ => false,
                         };
-                        if spec.unit == catalog::UnitKind::Raw {
-                            raw_box(ui, &spec.title(&cfg), *val);
-                        } else {
-                            let (min, max) = spec.range_for(&cfg);
-                            gauge(ui, &spec.title(&cfg), v, min, max, spec.decimals, warn);
-                        }
-                        if i % 3 == 2 {
+                        let (min, max) = spec.range_for(&cfg);
+                        gauge(ui, &spec.title(&cfg), v, min, max, spec.decimals, warn);
+                        col += 1;
+                        if col % 3 == 0 {
                             ui.end_row();
                         }
                     }
                 });
+
+            // ---- Digital register region (compact on/off indicators)
+            let digital: Vec<(&catalog::SensorSpec, Option<f64>)> = specs
+                .iter()
+                .zip(&values)
+                .filter(|(s, _)| catalog::is_digital(s))
+                .map(|(s, v)| (*s, *v))
+                .collect();
+            if !digital.is_empty() {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Digital Registers").strong());
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (spec, val) in digital {
+                        digital_panel(ui, spec, val);
+                    }
+                });
+            }
         });
 
         ui.add_space(8.0);
@@ -94,32 +113,44 @@ impl ConsultApp {
     }
 }
 
-/// Display box for raw digital bit registers: hex and binary.
-fn raw_box(ui: &mut egui::Ui, title: &str, value: Option<f64>) {
+/// Compact indicator panel for one digital bit register: 8 bits in two
+/// columns, green dot + name when set, dim when clear.
+fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f64>) {
     egui::Frame::group(ui.style())
         .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
         .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(230.0, 60.0));
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(title).weak());
-                match value {
-                    Some(v) => {
-                        let b = v as u8;
-                        ui.label(
-                            RichText::new(format!("0x{b:02X}"))
-                                .monospace()
-                                .size(18.0),
-                        );
-                        ui.label(
-                            RichText::new(format!("0b{b:08b}"))
-                                .monospace()
-                                .weak(),
-                        );
+            ui.label(RichText::new(spec.label).strong().small());
+            let byte = value.map(|v| v as u8);
+            egui::Grid::new(format!("dig_{}", spec.id))
+                .num_columns(2)
+                .spacing([18.0, 2.0])
+                .show(ui, |ui| {
+                    for row in 0u8..4 {
+                        bit_indicator(ui, spec, byte, 7 - row); // left column: bits 7..4
+                        bit_indicator(ui, spec, byte, 3 - row); // right column: bits 3..0
+                        ui.end_row();
                     }
-                    None => {
-                        ui.label(RichText::new("--").monospace().size(18.0));
-                    }
-                }
-            });
+                });
+            let hex = byte.map(|b| format!("0x{b:02X}")).unwrap_or("--".into());
+            ui.label(RichText::new(hex).monospace().weak().small());
         });
+}
+
+fn bit_indicator(ui: &mut egui::Ui, spec: &catalog::SensorSpec, byte: Option<u8>, bit: u8) {
+    let on = byte.is_some_and(|b| b & (1 << bit) != 0);
+    let name = catalog::digital_bit_name(spec.id, bit)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Bit {bit}"));
+    let (dot, text) = if on {
+        (Color32::from_rgb(80, 220, 100), ui.visuals().text_color())
+    } else {
+        (Color32::from_rgb(70, 70, 70), ui.visuals().weak_text_color())
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.colored_label(dot, "\u{25CF}");
+        ui.label(RichText::new(name).color(text).small());
+    })
+    .response
+    .on_hover_text(format!("{} bit {}: {}", spec.label, bit, if on { "ON" } else { "off" }));
 }

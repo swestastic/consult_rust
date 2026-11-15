@@ -69,6 +69,40 @@ pub fn find_spec(id: &str) -> Option<&'static SensorSpec> {
     CATALOG.iter().find(|s| s.id == id)
 }
 
+/// Name of a digital-register bit, per the consult_box bit map
+/// (and the register PDF). Unknown bits return None.
+pub fn digital_bit_name(spec_id: &str, bit: u8) -> Option<&'static str> {
+    let table: &[(u8, &str)] = match spec_id {
+        "d13" => &[
+            (4, "A/C Switch"),
+            (3, "Power Steering Sw"),
+            (2, "Park/Neutral Sw"),
+            (1, "Start Signal"),
+            (0, "TPS Closed"),
+        ],
+        "d1e" => &[
+            (7, "A/C Relay"),
+            (6, "Fuel Pump Relay"),
+            (5, "VTC Solenoid"),
+            (1, "Coolant Fan Hi"),
+            (0, "Coolant Fan Lo"),
+        ],
+        "d1f" => &[
+            (6, "P/Reg Control Valve"),
+            (5, "Wastegate Sol"),
+            (3, "IACV/FICD Sol"),
+            (0, "EGR Solenoid"),
+        ],
+        "d21" => &[(7, "LH Bank Lean"), (6, "RH Bank Lean")],
+        _ => return None,
+    };
+    table.iter().find(|(b, _)| *b == bit).map(|(_, n)| *n)
+}
+
+pub fn is_digital(spec: &SensorSpec) -> bool {
+    spec.unit == UnitKind::Raw
+}
+
 /// Selected specs in catalog order.
 pub fn selected_specs(ids: &[String]) -> Vec<&'static SensorSpec> {
     CATALOG.iter().filter(|s| ids.iter().any(|i| i == s.id)).collect()
@@ -285,5 +319,16 @@ mod tests {
         let specs = selected_specs(&clean);
         assert!(register_count(&specs) <= MAX_STREAM_REGISTERS);
         assert!(sanitize_selection(vec![]).len() == DEFAULT_SELECTION.len());
+    }
+
+    #[test]
+    fn digital_bit_names_match_consult_box() {
+        assert_eq!(digital_bit_name("d13", 4), Some("A/C Switch"));
+        assert_eq!(digital_bit_name("d13", 0), Some("TPS Closed"));
+        assert_eq!(digital_bit_name("d1e", 6), Some("Fuel Pump Relay"));
+        assert_eq!(digital_bit_name("d1f", 5), Some("Wastegate Sol"));
+        assert_eq!(digital_bit_name("d21", 7), Some("LH Bank Lean"));
+        assert_eq!(digital_bit_name("d13", 7), None);
+        assert_eq!(digital_bit_name("rpm", 0), None);
     }
 }

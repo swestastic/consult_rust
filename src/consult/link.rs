@@ -350,6 +350,7 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
     let mut streaming = false;
     let mut stream_regs: Vec<u8> = Vec::new();
     let mut next_frame = Instant::now();
+    let start = Instant::now();
 
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -386,7 +387,11 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
         if streaming && Instant::now() >= next_frame {
             next_frame = Instant::now() + Duration::from_millis(100);
             if evt
-                .send(LinkEvent::StreamFrame(sim_frame(&mut rng, &stream_regs)))
+                .send(LinkEvent::StreamFrame(sim_frame(
+                    &mut rng,
+                    &stream_regs,
+                    start.elapsed().as_secs_f64(),
+                )))
                 .is_err()
             {
                 return;
@@ -397,9 +402,38 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
     }
 }
 
+/// Digital register patterns, ported from the consult_box demo: bits toggle
+/// slowly so the indicators are readable.
+fn sim_digital(reg: u8, t: f64) -> u8 {
+    let s = |freq: f64, phase: f64, thresh: f64| (t * freq + phase).sin() > thresh;
+    match reg {
+        0x13 => {
+            (u8::from(s(0.55, 0.0, 0.55)) << 4)
+                | (u8::from(s(0.8, 1.6, 0.35)) << 3)
+                | (1 << 2) // park/neutral, mostly on
+                | (u8::from(s(1.4, 0.0, 0.75)) << 1)
+                | u8::from((t * 0.9).sin() < -0.35)
+        }
+        0x1E => {
+            (u8::from(s(0.3, 0.4, 0.1)) << 7)
+                | (u8::from(s(0.85, 0.2, 0.3)) << 5)
+                | (u8::from(s(0.4, 0.0, 0.15)) << 1)
+                | u8::from(s(0.35, 0.8, 0.35))
+        }
+        0x1F => {
+            (u8::from(s(0.75, 1.0, 0.45)) << 6)
+                | (u8::from(s(1.05, 2.1, 0.6)) << 5)
+                | (u8::from(s(1.05, 2.1, 0.6)) << 3)
+                | u8::from(s(0.55, 0.0, 0.15))
+        }
+        0x21 => (u8::from(s(0.6, 0.0, 0.25)) << 7) | (u8::from(s(0.7, 2.5, -0.4)) << 6),
+        _ => 0,
+    }
+}
+
 /// Build a raw frame matching the requested register list, with plausible
 /// decoded values.
-fn sim_frame(rng: &mut XorShift, regs: &[u8]) -> Vec<u8> {
+fn sim_frame(rng: &mut XorShift, regs: &[u8], t: f64) -> Vec<u8> {
     // Physical values for this tick.
     let rpm_raw = (rng.range(700.0, 5200.0) / 12.5) as u16;
     let speed = rng.range(0.0, 180.0);
@@ -432,7 +466,7 @@ fn sim_frame(rng: &mut XorShift, regs: &[u8]) -> Vec<u8> {
             0x0D => (tps * 1000.0 / 20.0) as u8,
             0x0F | 0x11 => (temp_c + 50.0) as u8,
             0x12 => (egt * 1000.0 / 20.0) as u8,
-            0x13 | 0x1E | 0x1F | 0x21 => (rng.next() & 0xFF) as u8,
+            0x13 | 0x1E | 0x1F | 0x21 => sim_digital(reg, t),
             0x14 | 0x22 => (inj_raw >> 8) as u8,
             0x15 | 0x23 => inj_raw as u8,
             0x16 => (110.0 - timing) as u8,
