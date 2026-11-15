@@ -122,42 +122,66 @@ impl ConsultApp {
 /// Compact indicator panel for one digital bit register: 8 bits in two
 /// columns, green dot + name when set, dim when clear.
 fn digital_panel(ui: &mut egui::Ui, spec: &catalog::SensorSpec, value: Option<f64>) {
-    egui::Frame::group(ui.style())
-        .stroke(ui.style().visuals.widgets.noninteractive.bg_stroke)
-        .show(ui, |ui| {
-            ui.set_min_width(230.0);
-            ui.label(RichText::new(spec.label).strong().small());
-            let byte = value.map(|v| v as u8);
-            egui::Grid::new(format!("dig_{}", spec.id))
-                .num_columns(2)
-                .spacing([18.0, 2.0])
-                .show(ui, |ui| {
-                    for row in 0u8..4 {
-                        bit_indicator(ui, spec, byte, 7 - row); // left column: bits 7..4
-                        bit_indicator(ui, spec, byte, 3 - row); // right column: bits 3..0
-                        ui.end_row();
-                    }
-                });
-            let hex = byte.map(|b| format!("0x{b:02X}")).unwrap_or("--".into());
-            ui.label(RichText::new(hex).monospace().weak().small());
-        });
-}
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(230.0, 124.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let dim = ui.visuals().weak_text_color();
+    let fg = ui.visuals().text_color();
 
-fn bit_indicator(ui: &mut egui::Ui, spec: &catalog::SensorSpec, byte: Option<u8>, bit: u8) {
-    let on = byte.is_some_and(|b| b & (1 << bit) != 0);
-    let name = catalog::digital_bit_name(spec.id, bit)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("Bit {bit}"));
-    let (dot, text) = if on {
-        (Color32::from_rgb(80, 220, 100), ui.visuals().text_color())
-    } else {
-        (Color32::from_rgb(70, 70, 70), ui.visuals().weak_text_color())
-    };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.colored_label(dot, "\u{25CF}");
-        ui.label(RichText::new(name).color(text).small());
-    })
-    .response
-    .on_hover_text(format!("{} bit {}: {}", spec.label, bit, if on { "ON" } else { "off" }));
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, ui.style().visuals.widgets.noninteractive.bg_stroke.color),
+        egui::StrokeKind::Inside,
+    );
+
+    let pad = 10.0;
+    painter.text(
+        egui::pos2(rect.left() + pad, rect.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        spec.label,
+        egui::FontId::proportional(12.0),
+        fg,
+    );
+
+    let byte = value.map(|v| v as u8);
+    let grid_top = rect.top() + 26.0;
+    let row_h = 18.0;
+    let col_x = [rect.left() + pad, rect.left() + rect.width() / 2.0];
+    for row in 0u8..4 {
+        for (col, base) in col_x.iter().enumerate() {
+            // left column: bits 7..4, right column: bits 3..0
+            let bit = if col == 0 { 7 - row } else { 3 - row };
+            let on = byte.is_some_and(|b| b & (1 << bit) != 0);
+            let y = grid_top + row as f32 * row_h + row_h / 2.0;
+            let (dot, text) = if on {
+                (Color32::from_rgb(80, 220, 100), fg)
+            } else {
+                (Color32::from_rgb(70, 70, 70), dim)
+            };
+            painter.circle_filled(egui::pos2(base + 5.0, y), 4.0, dot);
+            let name = catalog::digital_bit_name(spec.id, bit)
+                .map(String::from)
+                .unwrap_or_else(|| format!("Bit {bit}"));
+            painter.text(
+                egui::pos2(base + 14.0, y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(11.0),
+                text,
+            );
+        }
+    }
+
+    let hex = byte.map(|b| format!("0x{b:02X}")).unwrap_or("--".into());
+    painter.text(
+        egui::pos2(rect.right() - pad, rect.bottom() - 6.0),
+        egui::Align2::RIGHT_BOTTOM,
+        hex,
+        egui::FontId::monospace(10.0),
+        dim,
+    );
+
+    if let Some(b) = byte {
+        resp.on_hover_text(format!("{} = 0x{b:02X} (0b{b:08b})", spec.label));
+    }
 }
