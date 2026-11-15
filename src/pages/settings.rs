@@ -217,6 +217,8 @@ impl ConsultApp {
         if selection_changed {
             // Column set changes invalidate an in-progress log, and the ECU
             // needs a fresh stream request for the new registers.
+            self.history.clear();
+            self.history_start = None;
             if self.logger.is_logging() {
                 self.logger.stop();
                 self.status = "Logging stopped (displayed items changed).".into();

@@ -144,6 +144,13 @@ pub struct ConsultApp {
     pub frame_seq: u64,
     /// Arrival times of recent stream frames, for the health readout.
     pub frame_times: VecDeque<Instant>,
+    /// Rolling decoded-value history for the live plot: (seconds since the
+    /// first frame, one value per selected item in catalog order).
+    pub history: VecDeque<(f64, Vec<f64>)>,
+    pub history_start: Option<Instant>,
+    /// Live-plot channel toggles (non-digital items) and normalize flag.
+    pub plot_channels: Vec<bool>,
+    pub plot_normalize: bool,
     pub last_logged_seq: u64,
     pub logger: DataLogger,
     pub dtc: DtcState,
@@ -243,6 +250,10 @@ impl ConsultApp {
             frame: None,
             frame_seq: 0,
             frame_times: VecDeque::new(),
+            history: VecDeque::new(),
+            history_start: None,
+            plot_channels: Vec::new(),
+            plot_normalize: false,
             last_logged_seq: 0,
             logger: DataLogger::new(),
             dtc: DtcState::default(),
@@ -454,6 +465,8 @@ impl ConsultApp {
                     self.reconnect_attempts = 0;
                     self.reconnect_at = None;
                     self.peaks.clear();
+                    self.history.clear();
+                    self.history_start = None;
                     // Remember the port that worked for the next launch.
                     if !self.test_mode()
                         && self.config.last_port.as_deref() != Some(self.selected_port.as_str())

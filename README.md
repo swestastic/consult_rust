@@ -10,6 +10,8 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
   AAC, injector pulse, plus MAF/O2 readouts
 - Per-session peak recall: each gauge shows its observed maximum; reset from
   the Data Stream controls
+- Rolling live plot (last 60 s) under the gauges, with per-channel toggles and
+  a normalize option
 - Selectable display items: pick which ECU registers to stream (Settings ->
   Displayed items); 24 known sensors/registers including dual-bank MAF/O2/
   injector, AF alpha/self-learn, and raw digital bit registers
