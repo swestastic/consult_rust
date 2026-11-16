@@ -82,5 +82,19 @@ impl ConsultApp {
                 ui.label("Use the tabs above to open Data Stream, DTCs, or Testing.");
             }
         });
+
+        // Name the comm log file so a user reporting a problem knows which
+        // one to send. Kept visible after disconnect for that reason.
+        if let Some(name) = &self.comm_log_file {
+            ui.add_space(10.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Comm log: {name} — send this file when reporting issues."
+                    ))
+                    .weak(),
+                );
+            });
+        }
     }
 }

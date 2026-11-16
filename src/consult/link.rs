@@ -2,12 +2,12 @@
 //! interface for test mode. The GUI talks to the link through channels;
 //! all blocking serial I/O happens on the worker thread.
 
-use std::io::{Read, Write};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::consult::protocol::*;
+use crate::logging::CommLogger;
 
 pub enum LinkCommand {
     StartStream(Vec<u8>),
@@ -32,6 +32,8 @@ pub enum LinkCommand {
 
 pub enum LinkEvent {
     Connected,
+    /// Comm log file recording this connection's raw traffic, when enabled.
+    CommLogStarted(String),
     StreamFrame(Vec<u8>),
     DtcReport(Vec<(u8, u8)>),
     TransientDtc(Vec<(u8, u8)>),
@@ -58,11 +60,12 @@ impl LinkHandle {
         port_name: String,
         ecu_candidates: Vec<u8>,
         evt_tx: Sender<LinkEvent>,
+        comm_log: bool,
     ) -> std::io::Result<LinkHandle> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let join = std::thread::Builder::new()
             .name("consult-link".into())
-            .spawn(move || serial_worker(port_name, ecu_candidates, evt_tx, cmd_rx))?;
+            .spawn(move || serial_worker(port_name, ecu_candidates, evt_tx, cmd_rx, comm_log))?;
         Ok(LinkHandle {
             cmd_tx,
             join: Some(join),
@@ -70,11 +73,14 @@ impl LinkHandle {
         })
     }
 
-    pub fn start_simulator(evt_tx: Sender<LinkEvent>) -> std::io::Result<LinkHandle> {
+    pub fn start_simulator(
+        evt_tx: Sender<LinkEvent>,
+        comm_log: bool,
+    ) -> std::io::Result<LinkHandle> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let join = std::thread::Builder::new()
             .name("consult-sim".into())
-            .spawn(move || sim_worker(evt_tx, cmd_rx))?;
+            .spawn(move || sim_worker(evt_tx, cmd_rx, comm_log))?;
         Ok(LinkHandle {
             cmd_tx,
             join: Some(join),
@@ -94,6 +100,33 @@ impl Drop for LinkHandle {
 
 // ---------------------------------------------------------------- serial worker
 
+/// Write bytes to the port, recording them (or the failure) in the comm log.
+fn write_logged(
+    port: &mut dyn SerialPort,
+    log: &mut CommLogger,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let result = port.write_all(bytes).and_then(|_| port.flush());
+    match &result {
+        Ok(()) => log.tx(bytes),
+        Err(e) => log.note(&format!("TX failed ({e}): {}", to_hex(bytes))),
+    }
+    result
+}
+
+/// Read from the port, recording any received bytes in the comm log.
+fn read_logged(
+    port: &mut dyn SerialPort,
+    log: &mut CommLogger,
+    buf: &mut [u8],
+) -> std::io::Result<usize> {
+    let result = port.read(buf);
+    if let Ok(n) = result {
+        log.rx(&buf[..n]);
+    }
+    result
+}
+
 /// State of an in-progress ROM dump: next address, end address, and the
 /// in-flight chunk request (with resend count).
 struct RomDump {
@@ -108,6 +141,7 @@ fn serial_worker(
     ecu_candidates: Vec<u8>,
     evt: Sender<LinkEvent>,
     cmd_rx: Receiver<LinkCommand>,
+    comm_log: bool,
 ) {
     let mut port = match serialport::new(&port_name, BAUD_RATE)
         .timeout(Duration::from_millis(60))
@@ -120,10 +154,21 @@ fn serial_worker(
         }
     };
 
-    if let Err(e) = handshake(&mut *port, &ecu_candidates) {
+    let mut log = if comm_log {
+        CommLogger::start(&port_name)
+    } else {
+        CommLogger::disabled()
+    };
+    if let Some(name) = &log.file_name {
+        let _ = evt.send(LinkEvent::CommLogStarted(name.clone()));
+    }
+
+    if let Err(e) = handshake(&mut *port, &ecu_candidates, &mut log) {
+        log.note(&format!("Handshake failed: {e}"));
         let _ = evt.send(LinkEvent::Error(e));
         return;
     }
+    log.note("Handshake OK, link up");
     if evt.send(LinkEvent::Connected).is_err() {
         return;
     }
@@ -144,18 +189,18 @@ fn serial_worker(
             match cmd_rx.try_recv() {
                 Ok(LinkCommand::Shutdown) => {
                     if streaming || activation_active || watching_transient || rom_dump.is_some() {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                     }
+                    log.note("Connection closed");
                     return;
                 }
                 Ok(LinkCommand::StartStream(regs)) => {
                     stream_regs = regs;
-                    let _ = port.write_all(&build_stream_command(&stream_regs));
-                    let _ = port.flush();
+                    let _ = write_logged(&mut *port, &mut log, &build_stream_command(&stream_regs));
                     streaming = true;
                 }
                 Ok(LinkCommand::StopStream) => {
-                    stop_and_drain(&mut *port, &mut parser);
+                    stop_and_drain(&mut *port, &mut parser, &mut log);
                     streaming = false;
                 }
                 // Activations are fire-and-forget: no STOP afterwards, since
@@ -164,8 +209,7 @@ fn serial_worker(
                 // frame parser.
                 Ok(LinkCommand::Activate { kind, data }) => {
                     let bytes = activation_command(kind, data);
-                    let _ = port.write_all(&bytes);
-                    let _ = port.flush();
+                    let _ = write_logged(&mut *port, &mut log, &bytes);
                     activation_active = true;
                     let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
                 }
@@ -175,19 +219,21 @@ fn serial_worker(
                         bytes.extend_from_slice(&[CMD_ACTIVATE, *kind, *data]);
                     }
                     bytes.push(TERMINATOR);
-                    let _ = port.write_all(&bytes);
-                    let _ = port.flush();
+                    let _ = write_logged(&mut *port, &mut log, &bytes);
                     activation_active = true;
                     let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
                 }
                 Ok(LinkCommand::CancelActivations) => {
                     if activation_active {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                         activation_active = false;
                         // STOP also stopped the stream; restart it.
                         if streaming {
-                            let _ = port.write_all(&build_stream_command(&stream_regs));
-                            let _ = port.flush();
+                            let _ = write_logged(
+                                &mut *port,
+                                &mut log,
+                                &build_stream_command(&stream_regs),
+                            );
                         }
                         let _ = evt.send(LinkEvent::RawLog(
                             "TX: 30 (active tests cancelled)".into(),
@@ -196,19 +242,18 @@ fn serial_worker(
                 }
                 Ok(LinkCommand::WatchTransientDtc) => {
                     if streaming {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                         streaming = false;
                     }
                     let bytes = [CMD_TRANSIENT_DTC, TERMINATOR];
                     let _ = port.clear(serialport::ClearBuffer::Input);
-                    let _ = port.write_all(&bytes);
-                    let _ = port.flush();
+                    let _ = write_logged(&mut *port, &mut log, &bytes);
                     watching_transient = true;
                     let _ = evt.send(LinkEvent::RawLog(format!("TX: {}", to_hex(&bytes))));
                 }
                 Ok(LinkCommand::StopTransientWatch) => {
                     if watching_transient {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                         watching_transient = false;
                         let _ = evt.send(LinkEvent::RawLog(
                             "TX: 30 (transient watch stopped)".into(),
@@ -218,7 +263,7 @@ fn serial_worker(
                 Ok(LinkCommand::RomDump { start, len }) => {
                     if rom_dump.is_none() {
                         if streaming {
-                            stop_and_drain(&mut *port, &mut parser);
+                            stop_and_drain(&mut *port, &mut parser, &mut log);
                             streaming = false;
                         }
                         rom_dump = Some(RomDump {
@@ -234,7 +279,7 @@ fn serial_worker(
                 }
                 Ok(LinkCommand::CancelRomDump) => {
                     if rom_dump.take().is_some() {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                         let _ = evt.send(LinkEvent::RomDumpDone { cancelled: true });
                     }
                 }
@@ -247,12 +292,12 @@ fn serial_worker(
                 }
                 Ok(cmd) => {
                     if streaming {
-                        stop_and_drain(&mut *port, &mut parser);
+                        stop_and_drain(&mut *port, &mut parser, &mut log);
                     }
-                    run_query(cmd, &mut *port, &mut parser, &evt);
+                    run_query(cmd, &mut *port, &mut parser, &evt, &mut log);
                     if streaming {
-                        let _ = port.write_all(&build_stream_command(&stream_regs));
-                        let _ = port.flush();
+                        let _ =
+                            write_logged(&mut *port, &mut log, &build_stream_command(&stream_regs));
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -267,16 +312,14 @@ fn serial_worker(
                     let n = ((dump.end - dump.next).min(ROM_CHUNK as u32)) as u8;
                     let req = build_rom_request(dump.next as u16, n);
                     let _ = port.clear(serialport::ClearBuffer::Input);
-                    let _ = port.write_all(&req);
-                    let _ = port.flush();
+                    let _ = write_logged(&mut *port, &mut log, &req);
                     dump.awaiting_since = Some(Instant::now());
                 }
                 Some(since) if since.elapsed() > Duration::from_millis(800) => {
                     dump.retries += 1;
                     if dump.retries > 3 {
                         rom_dump = None;
-                        let _ = port.write_all(&[STOP]);
-                        let _ = port.flush();
+                        let _ = write_logged(&mut *port, &mut log, &[STOP]);
                         let _ = evt.send(LinkEvent::RawLog(
                             "ROM dump failed: no response from ECU".into(),
                         ));
@@ -289,7 +332,7 @@ fn serial_worker(
             }
         }
 
-        match port.read(&mut buf) {
+        match read_logged(&mut *port, &mut log, &mut buf) {
             Ok(n) => {
                 for &b in &buf[..n] {
                     match parser.feed(b) {
@@ -309,8 +352,7 @@ fn serial_worker(
                                         data: frame.clone(),
                                     });
                                     // Stop the repeated chunk response.
-                                    let _ = port.write_all(&[STOP]);
-                                    let _ = port.flush();
+                                    let _ = write_logged(&mut *port, &mut log, &[STOP]);
                                     claimed = true;
                                 }
                             }
@@ -345,6 +387,7 @@ fn serial_worker(
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
+                log.note(&format!("Serial error: {e}"));
                 let _ = evt.send(LinkEvent::Error(format!("Serial error: {e}")));
                 return;
             }
@@ -352,20 +395,23 @@ fn serial_worker(
     }
 }
 
-fn handshake(port: &mut dyn SerialPort, candidates: &[u8]) -> Result<(), String> {
+fn handshake(
+    port: &mut dyn SerialPort,
+    candidates: &[u8],
+    log: &mut CommLogger,
+) -> Result<(), String> {
     for &ecu_address in candidates {
         let expected = expected_init_reply(ecu_address);
         for _ in 0..3 {
             let _ = port.clear(serialport::ClearBuffer::All);
-            port.write_all(&init_sequence(ecu_address))
+            write_logged(port, log, &init_sequence(ecu_address))
                 .map_err(|e| format!("Init write failed: {e}"))?;
-            let _ = port.flush();
             std::thread::sleep(Duration::from_millis(100));
 
             let deadline = Instant::now() + Duration::from_millis(900);
             let mut b = [0u8; 1];
             while Instant::now() < deadline {
-                match port.read(&mut b) {
+                match read_logged(port, log, &mut b) {
                     Ok(1) if b[0] == expected => return Ok(()),
                     Ok(_) => {}
                     Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
@@ -385,13 +431,12 @@ fn handshake(port: &mut dyn SerialPort, candidates: &[u8]) -> Result<(), String>
 }
 
 /// Send STOP and read until the ECU acknowledges (0xCF) or we time out.
-fn stop_and_drain(port: &mut dyn SerialPort, parser: &mut FrameParser) {
-    let _ = port.write_all(&[STOP]);
-    let _ = port.flush();
+fn stop_and_drain(port: &mut dyn SerialPort, parser: &mut FrameParser, log: &mut CommLogger) {
+    let _ = write_logged(port, log, &[STOP]);
     let deadline = Instant::now() + Duration::from_millis(400);
     let mut buf = [0u8; 256];
     while Instant::now() < deadline {
-        match port.read(&mut buf) {
+        match read_logged(port, log, &mut buf) {
             Ok(n) => {
                 for &b in &buf[..n] {
                     if matches!(parser.feed(b), Some(ParserOutput::StopAck)) {
@@ -412,6 +457,7 @@ fn run_query(
     port: &mut dyn SerialPort,
     parser: &mut FrameParser,
     evt: &Sender<LinkEvent>,
+    log: &mut CommLogger,
 ) {
     let (bytes, max_wait, silence) = match &cmd {
         LinkCommand::ReadDtc => (vec![CMD_READ_DTC, TERMINATOR], 3000, 600),
@@ -426,11 +472,10 @@ fn run_query(
     }
 
     let _ = port.clear(serialport::ClearBuffer::Input);
-    if port.write_all(&bytes).is_err() {
+    if write_logged(port, log, &bytes).is_err() {
         let _ = evt.send(LinkEvent::Error("Write failed".into()));
         return;
     }
-    let _ = port.flush();
 
     let start = Instant::now();
     let mut last_frame: Option<Instant> = None;
@@ -438,7 +483,7 @@ fn run_query(
     let mut buf = [0u8; 256];
 
     while start.elapsed() < Duration::from_millis(max_wait) {
-        match port.read(&mut buf) {
+        match read_logged(port, log, &mut buf) {
             Ok(n) => {
                 for &b in &buf[..n] {
                     if let Some(ParserOutput::Frame(f)) = parser.feed(b) {
@@ -463,7 +508,7 @@ fn run_query(
         }
     }
 
-    stop_and_drain(port, parser);
+    stop_and_drain(port, parser, log);
 
     match cmd {
         LinkCommand::ReadDtc => {
@@ -511,7 +556,18 @@ impl XorShift {
     }
 }
 
-fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
+fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>, comm_log: bool) {
+    // Same comm-log file as a real connection, so the logging feature can
+    // be exercised without hardware; the header marks it as simulated.
+    let mut log = if comm_log {
+        CommLogger::start("SIMULATOR")
+    } else {
+        CommLogger::disabled()
+    };
+    if let Some(name) = &log.file_name {
+        let _ = evt.send(LinkEvent::CommLogStarted(name.clone()));
+    }
+    log.note("Simulated link — no real ECU traffic");
     if evt.send(LinkEvent::Connected).is_err() {
         return;
     }
@@ -524,26 +580,39 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                LinkCommand::Shutdown => return,
+                LinkCommand::Shutdown => {
+                    log.note("Connection closed");
+                    return;
+                }
                 LinkCommand::StartStream(regs) => {
                     stream_regs = regs;
+                    log.tx(&build_stream_command(&stream_regs));
                     streaming = true;
                 }
-                LinkCommand::StopStream => streaming = false,
+                LinkCommand::StopStream => {
+                    log.tx(&[STOP]);
+                    streaming = false;
+                }
                 LinkCommand::ReadDtc => {
+                    log.tx(&[CMD_READ_DTC, TERMINATOR]);
                     std::thread::sleep(Duration::from_millis(300));
+                    log.rx(&[0x55, 0x00]);
                     let _ = evt.send(LinkEvent::DtcReport(vec![(0x55, 0x00)]));
                 }
                 LinkCommand::ClearDtc => {
+                    log.tx(&[CMD_CLEAR_DTC, TERMINATOR]);
                     std::thread::sleep(Duration::from_millis(200));
                     let _ = evt.send(LinkEvent::DtcCleared);
                 }
                 LinkCommand::EcuInfo => {
+                    log.tx(&[CMD_ECU_INFO, TERMINATOR]);
                     // A real part number from the ECU ID table (Z32 300ZX
                     // Turbo) so test mode exercises the ECU-based filter.
+                    log.rx(b"SIMU 23710-41P70");
                     let _ = evt.send(LinkEvent::PartNumber("SIMU 23710-41P70".into()));
                 }
                 LinkCommand::Activate { kind, data } => {
+                    log.tx(&activation_command(kind, data));
                     let _ = evt.send(LinkEvent::RawLog(format!(
                         "Sim TX: {}",
                         to_hex(&activation_command(kind, data))
@@ -555,19 +624,24 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                         bytes.extend_from_slice(&[CMD_ACTIVATE, *kind, *data]);
                     }
                     bytes.push(TERMINATOR);
+                    log.tx(&bytes);
                     let _ = evt.send(LinkEvent::RawLog(format!("Sim TX: {}", to_hex(&bytes))));
                 }
                 LinkCommand::CancelActivations => {
+                    log.tx(&[STOP]);
                     let _ = evt.send(LinkEvent::RawLog(
                         "Sim TX: 30 (active tests cancelled)".into(),
                     ));
                 }
                 LinkCommand::WatchTransientDtc => {
+                    log.tx(&[CMD_TRANSIENT_DTC, TERMINATOR]);
                     std::thread::sleep(Duration::from_millis(300));
+                    log.rx(&[0x12, 0x00]);
                     let _ = evt.send(LinkEvent::RawLog("Sim TX: 51 F0".into()));
                     let _ = evt.send(LinkEvent::TransientDtc(vec![(0x12, 0x00)]));
                 }
                 LinkCommand::StopTransientWatch => {
+                    log.tx(&[STOP]);
                     let _ = evt
                         .send(LinkEvent::RawLog("Sim TX: 30 (transient watch stopped)".into()));
                 }
@@ -576,10 +650,12 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                     let mut off = 0;
                     while off < total {
                         let n = (total - off).min(ROM_CHUNK as u32) as usize;
+                        log.tx(&build_rom_request((start as u32 + off) as u16, n as u8));
                         let data: Vec<u8> = (0..n)
                             .map(|i| (start as usize + off as usize + i) as u8)
                             .collect();
                         std::thread::sleep(Duration::from_millis(30));
+                        log.rx(&data);
                         if evt
                             .send(LinkEvent::RomChunk {
                                 data,
@@ -593,9 +669,11 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
                     let _ = evt.send(LinkEvent::RomDumpDone { cancelled: false });
                 }
                 LinkCommand::CancelRomDump => {
+                    log.tx(&[STOP]);
                     let _ = evt.send(LinkEvent::RomDumpDone { cancelled: true });
                 }
                 LinkCommand::Raw(b) => {
+                    log.tx(&b);
                     let _ = evt.send(LinkEvent::RawLog(format!("Sim TX: {}", to_hex(&b))));
                 }
             }
@@ -603,14 +681,9 @@ fn sim_worker(evt: Sender<LinkEvent>, cmd_rx: Receiver<LinkCommand>) {
 
         if streaming && Instant::now() >= next_frame {
             next_frame = Instant::now() + Duration::from_millis(100);
-            if evt
-                .send(LinkEvent::StreamFrame(sim_frame(
-                    &mut rng,
-                    &stream_regs,
-                    start.elapsed().as_secs_f64(),
-                )))
-                .is_err()
-            {
+            let frame = sim_frame(&mut rng, &stream_regs, start.elapsed().as_secs_f64());
+            log.rx(&frame);
+            if evt.send(LinkEvent::StreamFrame(frame)).is_err() {
                 return;
             }
         } else {

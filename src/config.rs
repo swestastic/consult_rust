@@ -55,6 +55,9 @@ pub struct Config {
     /// Show every catalog option regardless of the identified ECU
     /// (escape hatch for mislabeled/unknown ECUs).
     pub show_all_options: bool,
+    /// Record raw ECU communication (all bytes sent/received) to
+    /// logs/commlog_*.txt on each connection, for diagnosing issues.
+    pub comm_log: bool,
     /// Last serial port that connected successfully, restored on launch.
     pub last_port: Option<String>,
     /// Selected data-stream items (catalog ids), user-editable in Settings.
@@ -72,6 +75,7 @@ impl Default for Config {
             battery_low_v: 12.0,
             ecu_address: "EF".into(),
             show_all_options: false,
+            comm_log: true,
             last_port: None,
             display_items: crate::catalog::DEFAULT_SELECTION
                 .iter()

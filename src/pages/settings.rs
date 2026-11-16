@@ -117,6 +117,23 @@ impl ConsultApp {
                             );
                             ui.label("EF for most ECUs; ED for many '96+; AUTO to probe both");
                             ui.end_row();
+
+                            ui.label("Comm logging:");
+                            let mut comm_log = self.config.comm_log;
+                            if ui
+                                .checkbox(&mut comm_log, "Record ECU communication")
+                                .on_hover_text(
+                                    "Logs every byte sent to and received from the ECU to \
+                                     logs/commlog_<timestamp>.txt — send this file when \
+                                     reporting problems. Applies on the next connect.",
+                                )
+                                .changed()
+                            {
+                                self.config.comm_log = comm_log;
+                                let _ = self.config.save();
+                            }
+                            ui.label("applies on next connect");
+                            ui.end_row();
                         });
                 });
 

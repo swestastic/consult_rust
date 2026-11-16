@@ -201,6 +201,9 @@ pub struct ConsultApp {
     pub plot_open: bool,
     pub last_logged_seq: u64,
     pub logger: DataLogger,
+    /// File name of the current/most recent ECU communication log,
+    /// reported by the link worker when comm logging is enabled.
+    pub comm_log_file: Option<String>,
     pub dtc: DtcState,
     /// The connected ECU identified against the JWT core list (from the
     /// part number read automatically at connect). None until identified
@@ -313,6 +316,7 @@ impl ConsultApp {
             plot_open: false,
             last_logged_seq: 0,
             logger: DataLogger::new(),
+            comm_log_file: None,
             dtc: DtcState::default(),
             ecu: None,
             testing: TestingState::default(),
@@ -405,7 +409,7 @@ impl ConsultApp {
     pub fn connect(&mut self) {
         self.reconnect_at = None;
         if self.selected_port == TEST_MODE_LABEL {
-            match LinkHandle::start_simulator(self.evt_tx.clone()) {
+            match LinkHandle::start_simulator(self.evt_tx.clone(), self.config.comm_log) {
                 Ok(link) => {
                     self.link = Some(link);
                     self.conn = ConnState::Connecting;
@@ -423,7 +427,12 @@ impl ConsultApp {
                 return;
             }
         };
-        match LinkHandle::connect(self.selected_port.clone(), candidates, self.evt_tx.clone()) {
+        match LinkHandle::connect(
+            self.selected_port.clone(),
+            candidates,
+            self.evt_tx.clone(),
+            self.config.comm_log,
+        ) {
             Ok(link) => {
                 self.link = Some(link);
                 self.conn = ConnState::Connecting;
@@ -569,6 +578,9 @@ impl ConsultApp {
                         self.streaming = true;
                     }
                     self.send(LinkCommand::EcuInfo);
+                }
+                LinkEvent::CommLogStarted(name) => {
+                    self.comm_log_file = Some(name);
                 }
                 LinkEvent::StreamFrame(f) => {
                     if self.page == Page::Testing {
