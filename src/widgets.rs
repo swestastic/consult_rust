@@ -59,7 +59,13 @@ pub fn gauge(
 
     let center = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.72);
     let radius = (rect.width().min(rect.height() * 1.2)) / 2.0 - 16.0;
-    let dim = ui.visuals().weak_text_color();
+    // Arc, ticks, labels, and title switch to soft white so they stay
+    // readable on the red warn fill.
+    let dim = if warn {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 190)
+    } else {
+        ui.visuals().weak_text_color()
+    };
     let fg = ui.visuals().text_color();
 
     // Dial arc (180 degrees, left = min, right = max).
