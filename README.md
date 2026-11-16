@@ -42,6 +42,8 @@ Rust from the PyConsult prototype (`PyConsult/`). Works with most 90s-era Nissan
   the low/high coolant fans. Tests latch until cancelled with STOP (0x30), per
   the protocol docs; a Base idle / timing mode holds the AAC valve and timing
   so base idle can be set without unplugging the TPS
+- O2 sensor switching (cross-count) test: hold a warm engine at ~2000 RPM and
+  each bank must sweep lean/rich at least 5 times in 10 s to pass
 - Raw hex command console
 - Test mode with simulated data (no hardware needed)
 - Unit selection (MPH/KPH, F/C), speedometer correction factor,

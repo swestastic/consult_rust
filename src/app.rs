@@ -102,6 +102,7 @@ pub struct TestingState {
     pub temp_display: f32,
     pub raw_input: String,
     pub log: VecDeque<String>,
+    pub o2_test: O2TestState,
 }
 
 impl Default for TestingState {
@@ -117,6 +118,7 @@ impl Default for TestingState {
             temp_display: 180.0,
             raw_input: String::new(),
             log: VecDeque::new(),
+            o2_test: O2TestState::default(),
         }
     }
 }
@@ -129,6 +131,21 @@ impl TestingState {
             self.log.pop_front();
         }
     }
+}
+
+/// O2 sensor switching test (closed-loop cross-counts): with a fully warm
+/// engine held near 2000 RPM, each bank's O2 sensor should sweep
+/// lean<->rich at least 5 times in the 10 s measurement window.
+#[derive(Default)]
+pub struct O2TestState {
+    /// When the current measurement window started; None = idle.
+    pub started: Option<Instant>,
+    /// Last hysteresis state per bank (true = rich); None = undetermined.
+    pub last_rich: [Option<bool>; 2],
+    /// Lean<->rich crossings so far this window, per bank.
+    pub crossings: [u32; 2],
+    /// Per-bank crossing counts from the last completed window.
+    pub result: Option<[u32; 2]>,
 }
 
 /// Settings are edited as text (matching the original entry-box UX) and
@@ -463,6 +480,7 @@ impl ConsultApp {
             self.send(LinkCommand::StopStream);
             self.frame = None;
             self.testing.base_idle_active = false;
+            self.testing.o2_test = O2TestState::default();
         }
         // Stop the transient-DTC watch when leaving the DTC page.
         if self.page == Page::Dtc && self.dtc.watching {
@@ -550,6 +568,9 @@ impl ConsultApp {
                     self.send(LinkCommand::EcuInfo);
                 }
                 LinkEvent::StreamFrame(f) => {
+                    if self.page == Page::Testing {
+                        self.o2_test_frame(&f);
+                    }
                     self.frame = Some(f);
                     self.frame_seq += 1;
                     let now = Instant::now();

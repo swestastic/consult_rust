@@ -8,10 +8,76 @@ use crate::consult::link::LinkCommand;
 use crate::consult::protocol::{self, activate};
 
 /// Registers streamed while the Testing page is open, feeding the live
-/// adjustment readouts: RPM MSB/LSB, TPS, digital 0x13, ignition timing.
-pub(crate) const HELPER_REGS: [u8; 5] = [0x00, 0x01, 0x0D, 0x13, 0x16];
+/// adjustment readouts (RPM MSB/LSB, TPS, digital 0x13, ignition timing)
+/// and the O2 switching test (coolant temp, O2 LH/RH).
+pub(crate) const HELPER_REGS: [u8; 8] = [0x00, 0x01, 0x0D, 0x13, 0x16, 0x08, 0x09, 0x0A];
+
+/// O2 switching test measurement window.
+pub(crate) const O2_TEST_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+/// Lean<->rich crossings per window each bank needs to pass.
+pub(crate) const O2_PASS_CROSSINGS: u32 = 5;
+/// Hysteresis band (volts): at/below is lean, at/above is rich.
+const O2_LEAN_V: f64 = 0.40;
+const O2_RICH_V: f64 = 0.60;
+
+/// Update one bank's hysteresis state with a new O2 voltage; returns true
+/// when this sample completes a lean<->rich crossing.
+fn o2_crossed(last: &mut Option<bool>, volts: f64) -> bool {
+    let rich = if volts >= O2_RICH_V {
+        true
+    } else if volts <= O2_LEAN_V {
+        false
+    } else {
+        return false; // inside the hysteresis band: no state change
+    };
+    let crossed = *last == Some(!rich);
+    *last = Some(rich);
+    crossed
+}
 
 impl ConsultApp {
+    /// Feed a Testing-page stream frame (HELPER_REGS layout) into the O2
+    /// switching test.
+    pub(crate) fn o2_test_frame(&mut self, frame: &[u8]) {
+        let Some(start) = self.testing.o2_test.started else {
+            return;
+        };
+        // RH bank only counts when the ECU is positively identified as a
+        // V-engine; on anything else 0x0A may not be an O2 sensor at all.
+        let banks = if self.ecu.as_ref().is_some_and(|e| e.v_engine) {
+            2
+        } else {
+            1
+        };
+        let cfg = &self.config;
+        let t = &mut self.testing.o2_test;
+        for (bank, id) in ["o2_lh", "o2_rh"].into_iter().enumerate().take(banks) {
+            let volts =
+                catalog::find_spec(id).and_then(|s| s.decode(frame, &HELPER_REGS, cfg));
+            if let Some(volts) = volts
+                && o2_crossed(&mut t.last_rich[bank], volts)
+            {
+                t.crossings[bank] += 1;
+            }
+        }
+        if start.elapsed() >= O2_TEST_WINDOW {
+            let counts = t.crossings;
+            t.result = Some(counts);
+            t.started = None;
+            let pass = counts[..banks].iter().all(|&c| c >= O2_PASS_CROSSINGS);
+            let per_bank = if banks == 2 {
+                format!("LH {}, RH {}", counts[0], counts[1])
+            } else {
+                format!("{}", counts[0])
+            };
+            self.testing.push_log(format!(
+                "O2 switching test {}: {per_bank} crossing(s) in {} s (need {O2_PASS_CROSSINGS})",
+                if pass { "PASS" } else { "FAIL" },
+                O2_TEST_WINDOW.as_secs(),
+            ));
+        }
+    }
+
     pub(crate) fn show_testing(&mut self, ui: &mut egui::Ui) {
         if !self.connected() {
             ui.label("Not connected.");
@@ -154,6 +220,98 @@ fn fmt_opt(v: Option<f64>, decimals: usize, unit: &str) -> String {
     }
 }
 
+/// O2 sensor switching (cross-count) test: warm engine, ~2000 RPM, count
+/// lean<->rich sweeps over a 10 s window.
+fn show_o2_test(app: &mut ConsultApp, ui: &mut egui::Ui) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(RichText::new("O2 sensor switching test").strong());
+        ui.label(format!(
+            "Warm the engine fully, hold ~2000 RPM, then start the {} s measurement. \
+             Each bank's O2 sensor should sweep lean/rich at least {O2_PASS_CROSSINGS} times.",
+            O2_TEST_WINDOW.as_secs()
+        ));
+
+        let (rpm, coolant, o2_lh, o2_rh) = {
+            let frame: Option<&[u8]> = app.frame.as_deref();
+            let cfg = &app.config;
+            let get = |id: &str| {
+                catalog::find_spec(id).and_then(|s| frame.and_then(|f| s.decode(f, &HELPER_REGS, cfg)))
+            };
+            (get("rpm"), get("coolant"), get("o2_lh"), get("o2_rh"))
+        };
+        let v_engine = app.ecu.as_ref().is_some_and(|e| e.v_engine);
+
+        // Live condition readouts, green when the precondition is met.
+        ui.horizontal(|ui| {
+            let rpm_ok = rpm.is_some_and(|r| (1500.0..=2500.0).contains(&r));
+            let warm = coolant.is_some_and(|c| app.config.temp_to_c(c) >= 70.0);
+            let green = egui::Color32::from_rgb(80, 220, 100);
+            let gray = egui::Color32::from_rgb(70, 70, 70);
+            ui.colored_label(if rpm_ok { green } else { gray }, "\u{25CF}");
+            ui.label(format!("RPM: {}", fmt_opt(rpm, 0, "")));
+            ui.colored_label(if warm { green } else { gray }, "\u{25CF}");
+            ui.label(format!(
+                "Coolant: {}{}",
+                fmt_opt(coolant, 0, ""),
+                if coolant.is_some() { format!(" °{}", app.config.temp_unit.label()) } else { String::new() }
+            ));
+        });
+        ui.horizontal(|ui| {
+            ui.label(format!("O2 LH: {}", fmt_opt(o2_lh, 2, "V")));
+            if v_engine {
+                ui.label(format!("O2 RH: {}", fmt_opt(o2_rh, 2, "V")));
+            }
+        });
+
+        let running = app.testing.o2_test.started.is_some();
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!running, egui::Button::new("Start")).clicked() {
+                app.testing.o2_test = crate::app::O2TestState {
+                    started: Some(std::time::Instant::now()),
+                    ..Default::default()
+                };
+            }
+            if ui.add_enabled(running, egui::Button::new("Cancel")).clicked() {
+                app.testing.o2_test = Default::default();
+            }
+        });
+
+        if let Some(start) = app.testing.o2_test.started {
+            let elapsed = start.elapsed().min(O2_TEST_WINDOW);
+            ui.add(
+                egui::ProgressBar::new(elapsed.as_secs_f32() / O2_TEST_WINDOW.as_secs() as f32)
+                    .text(format!("{:.0} s", elapsed.as_secs_f32())),
+            );
+            let c = app.testing.o2_test.crossings;
+            ui.label(if v_engine {
+                format!("Crossings — LH: {}  RH: {}", c[0], c[1])
+            } else {
+                format!("Crossings: {}", c[0])
+            });
+        } else if let Some(c) = app.testing.o2_test.result {
+            let pass = if v_engine {
+                c[0] >= O2_PASS_CROSSINGS && c[1] >= O2_PASS_CROSSINGS
+            } else {
+                c[0] >= O2_PASS_CROSSINGS
+            };
+            let (color, text) = if pass {
+                (egui::Color32::from_rgb(80, 220, 100), "PASS")
+            } else {
+                (egui::Color32::from_rgb(255, 90, 90), "FAIL")
+            };
+            let per_bank = if v_engine {
+                format!("LH {} · RH {}", c[0], c[1])
+            } else {
+                format!("{}", c[0])
+            };
+            ui.colored_label(
+                color,
+                RichText::new(format!("{text}: {per_bank} crossing(s)")).strong(),
+            );
+        }
+    });
+}
+
 /// ROM dump controls (0xC9): address range in, progress, cancel.
 fn show_romdump(app: &mut ConsultApp, ui: &mut egui::Ui) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -254,6 +412,9 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
             }
         });
     });
+
+    ui.add_space(6.0);
+    show_o2_test(app, ui);
 
     ui.add_space(6.0);
     egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -419,7 +580,7 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
             }
             on_off_row(app, ui, "IACV-AAC/V control valve", activate::AACV_CONTROL_VALVE);
             if app.feature_visible(crate::ecuid::activation_feature(activate::TIMING_SOLENOID)) {
-                on_off_row(app, ui, "Valve timing solenoid (VTC)", activate::TIMING_SOLENOID);
+                on_off_row(app, ui, "Valve timing solenoid (VTC, both banks)", activate::TIMING_SOLENOID);
             }
             if app.feature_visible(crate::ecuid::activation_feature(activate::MAP_SW_SOLENOID)) {
                 on_off_row(app, ui, "MAP SW solenoid", activate::MAP_SW_SOLENOID);
@@ -475,4 +636,27 @@ fn show_raw(app: &mut ConsultApp, ui: &mut egui::Ui) {
                 );
             });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn o2_crossings_respect_hysteresis() {
+        let mut last = None;
+        // First sample establishes state, no crossing.
+        assert!(!o2_crossed(&mut last, 0.1));
+        // Inside the band: no state change, no crossing.
+        assert!(!o2_crossed(&mut last, 0.5));
+        assert_eq!(last, Some(false));
+        // Sweep to rich: one crossing.
+        assert!(o2_crossed(&mut last, 0.9));
+        // Stay rich.
+        assert!(!o2_crossed(&mut last, 0.7));
+        // Dip into the band: still rich.
+        assert!(!o2_crossed(&mut last, 0.5));
+        // Back to lean: second crossing.
+        assert!(o2_crossed(&mut last, 0.2));
+    }
 }
