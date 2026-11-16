@@ -38,14 +38,23 @@ pub fn gauge(
     // than the computed cell size and break the right-edge padding math.
     let (outer, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(outer);
-    painter.rect_filled(outer, 4.0, ui.visuals().extreme_bg_color);
+    // Warn state floods the panel background red, not just the needle and
+    // value, so an out-of-range reading is visible at a glance.
+    let fill = if warn {
+        Color32::from_rgba_unmultiplied(255, 50, 50, 70).blend(ui.visuals().extreme_bg_color)
+    } else {
+        ui.visuals().extreme_bg_color
+    };
+    let border = if warn {
+        Color32::from_rgb(255, 60, 60)
+    } else {
+        ui.style().visuals.widgets.noninteractive.bg_stroke.color
+    };
+    painter.rect_filled(outer, 4.0, fill);
     painter.rect_stroke(
         outer,
         4.0,
-        Stroke::new(
-            1.0,
-            ui.style().visuals.widgets.noninteractive.bg_stroke.color,
-        ),
+        Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
     let rect = outer.shrink(6.0);
