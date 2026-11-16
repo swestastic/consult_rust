@@ -72,9 +72,11 @@ impl EcuInfo {
 }
 
 /// Engines with Nissan VTC/NVCS variable valve timing (active test 0x8F).
-/// VG30DE/SR20DE are deliberately excluded: the US-market versions in this
-/// table shipped without VTC.
-const VTC_ENGINES: &[&str] = &["VE30DE", "VH41DE", "VH45DE", "VQ30DE"];
+/// The Z32's VG30s carry a VTC solenoid on each bank (all but USDM '96);
+/// the ECU drives both together through the single 0x8F command. SR20DE is
+/// deliberately excluded: the US-market versions in this table shipped
+/// without VTC.
+const VTC_ENGINES: &[&str] = &["VE30DE", "VG30DE", "VG30DET", "VH41DE", "VH45DE", "VQ30DE"];
 
 /// Twin-MAF engines (RH MAF registers 0x06/0x07).
 const TWIN_MAF_ENGINES: &[&str] = &["RB26DETT"];
@@ -219,11 +221,12 @@ mod tests {
         assert!(info.turbo);
         assert!(info.v_engine);
         assert!(!info.late96);
-        assert!(!info.vtc);
+        assert!(info.vtc); // VG30DET has VTC on both banks
         assert!(info.supports(Feature::Turbo));
         assert!(info.supports(Feature::VEngine));
         assert!(!info.supports(Feature::Late96));
         assert!(info.summary.contains("300ZX"));
+        assert!(info.summary.contains("'91-'92"));
     }
 
     #[test]
