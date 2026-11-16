@@ -34,7 +34,8 @@ impl ConsultApp {
     pub(crate) fn show_replay(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
 
-        // ---- File selection row
+        // ---- File selection rows: the combo and the actions on its
+        // selection first, external-file actions and status second.
         ui.horizontal(|ui| {
             ui.label("Log file:");
             let prev_selection = self.replay.selected_file.clone();
@@ -60,26 +61,6 @@ impl ConsultApp {
             }
             if ui.button("Refresh").clicked() {
                 self.refresh_log_files();
-            }
-            if ui
-                .button("Open Folder")
-                .on_hover_text("Open the logs folder in the file manager")
-                .clicked()
-            {
-                match crate::logfile::open_logs_folder() {
-                    Ok(()) => self.replay.status = "Opened logs folder.".into(),
-                    Err(e) => self.replay.status = e,
-                }
-            }
-            if ui
-                .button("Open...")
-                .on_hover_text("Load a CSV log from any folder")
-                .clicked()
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("CSV logs", &["csv"])
-                    .pick_file()
-            {
-                self.load_replay_file(&path);
             }
             if ui
                 .add_enabled(
@@ -118,6 +99,28 @@ impl ConsultApp {
                     self.replay.confirm_delete = true;
                 }
             }
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .button("Open Folder")
+                .on_hover_text("Open the logs folder in the file manager")
+                .clicked()
+            {
+                match crate::logfile::open_logs_folder() {
+                    Ok(()) => self.replay.status = "Opened logs folder.".into(),
+                    Err(e) => self.replay.status = e,
+                }
+            }
+            if ui
+                .button("Open...")
+                .on_hover_text("Load a CSV log from any folder")
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("CSV logs", &["csv"])
+                    .pick_file()
+            {
+                self.load_replay_file(&path);
+            }
             ui.separator();
             ui.label(&self.replay.status);
         });
@@ -143,41 +146,42 @@ impl ConsultApp {
             self.replay.channels = (0..columns.len()).map(|i| i < 2).collect();
         }
 
-        // ---- Transport controls
+        // ---- Transport controls + timeline scrubber
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui
-                .button(if self.replay.playing {
-                    "⏸ Pause"
-                } else {
-                    "⏵ Play"
-                })
-                .clicked()
-            {
-                self.replay.toggle_play();
-            }
-            egui::ComboBox::from_id_salt("replay_speed")
-                .selected_text(format!("{}x", self.replay.speed))
-                .show_ui(ui, |ui| {
-                    for s in REPLAY_SPEEDS {
-                        ui.selectable_value(&mut self.replay.speed, s, format!("{s}x"));
-                    }
-                });
-            ui.label(format!("{:.1} / {:.1} s", self.replay.t, duration));
-        });
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .button(if self.replay.playing {
+                        "⏸ Pause"
+                    } else {
+                        "⏵ Play"
+                    })
+                    .clicked()
+                {
+                    self.replay.toggle_play();
+                }
+                egui::ComboBox::from_id_salt("replay_speed")
+                    .selected_text(format!("{}x", self.replay.speed))
+                    .show_ui(ui, |ui| {
+                        for s in REPLAY_SPEEDS {
+                            ui.selectable_value(&mut self.replay.speed, s, format!("{s}x"));
+                        }
+                    });
+                ui.label(format!("{:.1} / {:.1} s", self.replay.t, duration));
+            });
 
-        // ---- Timeline scrubber
-        let mut t = self.replay.t;
-        let slider = egui::Slider::new(&mut t, 0.0..=duration.max(0.001))
-            .show_value(false)
-            .clamping(egui::SliderClamping::Always);
-        if ui
-            .add_sized([(ui.available_width() - 12.0).max(60.0), 18.0], slider)
-            .changed()
-        {
-            self.replay.t = t;
-            self.replay.last_tick = std::time::Instant::now();
-        }
+            let mut t = self.replay.t;
+            let slider = egui::Slider::new(&mut t, 0.0..=duration.max(0.001))
+                .show_value(false)
+                .clamping(egui::SliderClamping::Always);
+            if ui
+                .add_sized([(ui.available_width() - 4.0).max(60.0), 18.0], slider)
+                .changed()
+            {
+                self.replay.t = t;
+                self.replay.last_tick = std::time::Instant::now();
+            }
+        });
 
         // ---- Sample + plot data for the current position (immutable phase)
         let (values, points) = {

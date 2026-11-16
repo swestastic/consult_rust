@@ -197,6 +197,8 @@ pub struct ConsultApp {
     /// Live-plot channel toggles (non-digital items) and normalize flag.
     pub plot_channels: Vec<bool>,
     pub plot_normalize: bool,
+    /// Whether the rolling live plot is docked above the stream controls.
+    pub plot_open: bool,
     pub last_logged_seq: u64,
     pub logger: DataLogger,
     pub dtc: DtcState,
@@ -308,6 +310,7 @@ impl ConsultApp {
             history_start: None,
             plot_channels: Vec::new(),
             plot_normalize: false,
+            plot_open: false,
             last_logged_seq: 0,
             logger: DataLogger::new(),
             dtc: DtcState::default(),
@@ -714,12 +717,16 @@ impl eframe::App for ConsultApp {
 
         egui::Panel::top("nav").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("Consult Rust");
+                ui.label(egui::RichText::new("Consult Rust").strong().size(15.0));
                 ui.separator();
-                if ui
-                    .selectable_label(self.page == Page::Connect, "Connect")
-                    .clicked()
-                {
+                let tab = |ui: &mut egui::Ui, current: bool, label: &str| {
+                    ui.add(
+                        egui::Button::new(egui::RichText::new(label).size(13.0))
+                            .selected(current)
+                            .frame_when_inactive(false),
+                    )
+                };
+                if tab(ui, self.page == Page::Connect, "Connect").clicked() {
                     self.set_page(Page::Connect);
                 }
                 let can_browse = self.connected();
@@ -729,38 +736,41 @@ impl eframe::App for ConsultApp {
                     (Page::Testing, "Testing"),
                 ] {
                     ui.add_enabled_ui(can_browse, |ui| {
-                        if ui.selectable_label(self.page == page, label).clicked() {
+                        if tab(ui, self.page == page, label).clicked() {
                             self.set_page(page);
                         }
                     });
                 }
-                if ui
-                    .selectable_label(self.page == Page::Settings, "Settings")
-                    .clicked()
-                {
-                    self.set_page(Page::Settings);
-                }
-                if ui
-                    .selectable_label(self.page == Page::Replay, "Log Replay")
-                    .clicked()
-                {
+                if tab(ui, self.page == Page::Replay, "Log Replay").clicked() {
                     self.set_page(Page::Replay);
                 }
+                if tab(ui, self.page == Page::Settings, "Settings").clicked() {
+                    self.set_page(Page::Settings);
+                }
+
+                // Connection state pinned to the right edge of the bar.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (color, text) = match self.conn {
+                        ConnState::Disconnected => (egui::Color32::GRAY, "Disconnected"),
+                        ConnState::Connecting => (egui::Color32::YELLOW, "Connecting"),
+                        ConnState::Connected => (egui::Color32::GREEN, "Connected"),
+                    };
+                    if self.conn == ConnState::Connected {
+                        let where_ = if self.test_mode() {
+                            TEST_MODE_LABEL
+                        } else {
+                            self.selected_port.as_str()
+                        };
+                        ui.label(egui::RichText::new(where_).weak());
+                    }
+                    ui.label(text);
+                    ui.colored_label(color, "\u{25CF}");
+                });
             });
         });
 
         egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let (color, text) = match self.conn {
-                    ConnState::Disconnected => (egui::Color32::GRAY, "Disconnected"),
-                    ConnState::Connecting => (egui::Color32::YELLOW, "Connecting"),
-                    ConnState::Connected => (egui::Color32::GREEN, "Connected"),
-                };
-                ui.colored_label(color, "\u{25CF}");
-                ui.label(text);
-                ui.separator();
-                ui.label(&self.status);
-            });
+            ui.label(&self.status);
         });
 
         // No right margin so page scroll bars sit flush against the window

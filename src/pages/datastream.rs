@@ -100,6 +100,15 @@ impl ConsultApp {
                     self.peaks.clear();
                 }
 
+                ui.separator();
+                if ui
+                    .add(egui::Button::new("Plot").selected(self.plot_open))
+                    .on_hover_text("Dock a rolling live plot above these controls")
+                    .clicked()
+                {
+                    self.plot_open = !self.plot_open;
+                }
+
                 if self.streaming {
                     ui.separator();
                     let fps = self.stream_fps();
@@ -119,6 +128,78 @@ impl ConsultApp {
                 }
             });
         });
+
+        // Rolling live plot, docked above the controls when enabled.
+        if self.plot_open {
+            egui::Panel::bottom("stream_plot").show(ui, |ui| {
+                ui.add_space(4.0);
+                let plot_idx: Vec<usize> = specs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| !catalog::is_digital(s))
+                    .map(|(i, _)| i)
+                    .collect();
+                if self.plot_channels.len() != plot_idx.len() {
+                    self.plot_channels = (0..plot_idx.len()).map(|i| i < 2).collect();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for (k, &col) in plot_idx.iter().enumerate() {
+                        let on = self.plot_channels.get(k).copied().unwrap_or(false);
+                        let color = SERIES_COLORS[k % SERIES_COLORS.len()];
+                        let text = if on {
+                            RichText::new(specs[col].label).color(color).strong()
+                        } else {
+                            RichText::new(specs[col].label)
+                        };
+                        if ui.selectable_label(on, text).clicked()
+                            && let Some(ch) = self.plot_channels.get_mut(k)
+                        {
+                            *ch = !*ch;
+                        }
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut self.plot_normalize, "Normalize")
+                        .on_hover_text(
+                            "Scale each channel to 0..1 so different units can be compared.",
+                        );
+                });
+
+                let Some(&(latest_t, _)) = self.history.back() else {
+                    ui.label("Waiting for stream data...");
+                    return;
+                };
+                let window = 60.0;
+                let normalize = self.plot_normalize;
+                let mut enabled: Vec<(usize, Vec<[f64; 2]>)> = Vec::new();
+                for (k, &col) in plot_idx.iter().enumerate() {
+                    if !self.plot_channels.get(k).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                    let mut pts: Vec<[f64; 2]> = Vec::with_capacity(self.history.len());
+                    for (t, row) in &self.history {
+                        let v = row.get(col).copied().unwrap_or(0.0);
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                        pts.push([window - (latest_t - t), v]);
+                    }
+                    if normalize && hi > lo {
+                        for p in &mut pts {
+                            p[1] = (p[1] - lo) / (hi - lo);
+                        }
+                    }
+                    enabled.push((k, pts));
+                }
+                let series: Vec<Series> = enabled
+                    .iter()
+                    .map(|(k, pts)| Series {
+                        color: SERIES_COLORS[k % SERIES_COLORS.len()],
+                        points: pts,
+                    })
+                    .collect();
+                widgets::time_plot(ui, &series, window, None, 180.0);
+            });
+        }
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -195,78 +276,6 @@ impl ConsultApp {
                             }
                         });
                 }
-
-                // ---- Live plot (rolling last 60 s)
-                let plot_idx: Vec<usize> = specs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| !catalog::is_digital(s))
-                    .map(|(i, _)| i)
-                    .collect();
-                if self.plot_channels.len() != plot_idx.len() {
-                    self.plot_channels = (0..plot_idx.len()).map(|i| i < 2).collect();
-                }
-                ui.add_space(10.0);
-                egui::CollapsingHeader::new("Live plot (last 60 s)")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for (k, &col) in plot_idx.iter().enumerate() {
-                                let on = self.plot_channels.get(k).copied().unwrap_or(false);
-                                let color = SERIES_COLORS[k % SERIES_COLORS.len()];
-                                let text = if on {
-                                    RichText::new(specs[col].label).color(color).strong()
-                                } else {
-                                    RichText::new(specs[col].label)
-                                };
-                                if ui.selectable_label(on, text).clicked()
-                                    && let Some(ch) = self.plot_channels.get_mut(k)
-                                {
-                                    *ch = !*ch;
-                                }
-                            }
-                            ui.separator();
-                            ui.checkbox(&mut self.plot_normalize, "Normalize")
-                                .on_hover_text(
-                                    "Scale each channel to 0..1 so different units can be compared.",
-                                );
-                        });
-
-                        let Some(&(latest_t, _)) = self.history.back() else {
-                            ui.label("Waiting for stream data...");
-                            return;
-                        };
-                        let window = 60.0;
-                        let normalize = self.plot_normalize;
-                        let mut enabled: Vec<(usize, Vec<[f64; 2]>)> = Vec::new();
-                        for (k, &col) in plot_idx.iter().enumerate() {
-                            if !self.plot_channels.get(k).copied().unwrap_or(false) {
-                                continue;
-                            }
-                            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-                            let mut pts: Vec<[f64; 2]> = Vec::with_capacity(self.history.len());
-                            for (t, row) in &self.history {
-                                let v = row.get(col).copied().unwrap_or(0.0);
-                                lo = lo.min(v);
-                                hi = hi.max(v);
-                                pts.push([window - (latest_t - t), v]);
-                            }
-                            if normalize && hi > lo {
-                                for p in &mut pts {
-                                    p[1] = (p[1] - lo) / (hi - lo);
-                                }
-                            }
-                            enabled.push((k, pts));
-                        }
-                        let series: Vec<Series> = enabled
-                            .iter()
-                            .map(|(k, pts)| Series {
-                                color: SERIES_COLORS[k % SERIES_COLORS.len()],
-                                points: pts,
-                            })
-                            .collect();
-                        widgets::time_plot(ui, &series, window, None, 160.0);
-                    });
             });
 
         // Log once per incoming frame.

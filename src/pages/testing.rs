@@ -93,17 +93,23 @@ impl ConsultApp {
         );
         ui.add_space(6.0);
 
+        // Right rail: ROM dump and the raw-command log, which fills the
+        // rail's remaining height.
+        egui::Panel::right("testing_side")
+            .resizable(true)
+            .default_size(340.0)
+            .size_range(280.0..=560.0)
+            .show(ui, |ui| {
+                show_romdump(self, ui);
+                show_raw(self, ui);
+            });
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 show_live_readouts(self, ui);
                 ui.add_space(6.0);
-
-                ui.columns(2, |cols| {
-                    show_controls(self, &mut cols[0]);
-                    show_romdump(self, &mut cols[1]);
-                    show_raw(self, &mut cols[1]);
-                });
+                show_controls(self, ui);
             });
     }
 
@@ -448,30 +454,38 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
             app.send_activation(activate::POWER_BALANCE, 0x00);
         }
         let single = app.testing.pb_single_cyl;
-        for i in 0..8 {
-            let mut on = app.testing.cylinders[i];
-            if ui
-                .checkbox(&mut on, format!("Disable cylinder {}", i + 1))
-                .changed()
-            {
-                if single {
-                    // Radio behavior: one cylinder at a time, value = index+1.
-                    app.testing.cylinders = [false; 8];
-                    app.testing.cylinders[i] = on;
-                    let data = if on { (i + 1) as u8 } else { 0x00 };
-                    app.send_activation(activate::POWER_BALANCE, data);
-                } else {
-                    app.testing.cylinders[i] = on;
-                    let mask = app
-                        .testing
-                        .cylinders
-                        .iter()
-                        .enumerate()
-                        .fold(0u8, |m, (i, off)| if *off { m | (1 << i) } else { m });
-                    app.send_activation(activate::POWER_BALANCE, mask);
+        egui::Grid::new("pb_grid")
+            .num_columns(2)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                for i in 0..8 {
+                    let mut on = app.testing.cylinders[i];
+                    if ui
+                        .checkbox(&mut on, format!("Disable cylinder {}", i + 1))
+                        .changed()
+                    {
+                        if single {
+                            // Radio behavior: one cylinder at a time, value = index+1.
+                            app.testing.cylinders = [false; 8];
+                            app.testing.cylinders[i] = on;
+                            let data = if on { (i + 1) as u8 } else { 0x00 };
+                            app.send_activation(activate::POWER_BALANCE, data);
+                        } else {
+                            app.testing.cylinders[i] = on;
+                            let mask = app
+                                .testing
+                                .cylinders
+                                .iter()
+                                .enumerate()
+                                .fold(0u8, |m, (i, off)| if *off { m | (1 << i) } else { m });
+                            app.send_activation(activate::POWER_BALANCE, mask);
+                        }
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
                 }
-            }
-        }
+            });
         if ui.button("All cylinders on").clicked() {
             app.testing.cylinders = [false; 8];
             app.send_activation(activate::POWER_BALANCE, 0x00);
@@ -488,64 +502,74 @@ fn show_controls(app: &mut ConsultApp, ui: &mut egui::Ui) {
             crate::config::TempUnit::C => (-10.0, 130.0),
             crate::config::TempUnit::F => (14.0, 266.0),
         };
-        ui.horizontal(|ui| {
-            ui.label(format!("Coolant temp (°{temp_unit}):"));
-            ui.add(egui::Slider::new(&mut app.testing.temp_display, lo..=hi));
-            if ui.button("Send").clicked() {
-                let c = app.config.temp_to_c(app.testing.temp_display as f64);
-                app.send_activation(activate::COOLANT_TEMP, (c as i32 + 50).clamp(0, 255) as u8);
-            }
-        });
+        // Grid keeps labels, sliders, and Send buttons aligned.
+        ui.scope(|ui| {
+            ui.style_mut().spacing.slider_width = 200.0;
+            egui::Grid::new("adjust_grid")
+                .num_columns(3)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(format!("Coolant temp (°{temp_unit}):"));
+                    ui.add(egui::Slider::new(&mut app.testing.temp_display, lo..=hi));
+                    if ui.button("Send").clicked() {
+                        let c = app.config.temp_to_c(app.testing.temp_display as f64);
+                        app.send_activation(
+                            activate::COOLANT_TEMP,
+                            (c as i32 + 50).clamp(0, 255) as u8,
+                        );
+                    }
+                    ui.end_row();
 
-        ui.horizontal(|ui| {
-            ui.label("Fuel trim (%):       ");
-            ui.add(
-                egui::Slider::new(&mut app.testing.fuel_trim_pct, -10.0..=10.0)
-                    .step_by(1.0)
-                    .suffix("%"),
-            );
-            if ui.button("Send").clicked() {
-                app.send_activation(
-                    activate::FUEL_TRIM,
-                    (100.0 + app.testing.fuel_trim_pct).clamp(0.0, 255.0) as u8,
-                );
-            }
-        });
+                    ui.label("Fuel trim (%):");
+                    ui.add(
+                        egui::Slider::new(&mut app.testing.fuel_trim_pct, -10.0..=10.0)
+                            .step_by(1.0)
+                            .suffix("%"),
+                    );
+                    if ui.button("Send").clicked() {
+                        app.send_activation(
+                            activate::FUEL_TRIM,
+                            (100.0 + app.testing.fuel_trim_pct).clamp(0.0, 255.0) as u8,
+                        );
+                    }
+                    ui.end_row();
 
-        ui.horizontal(|ui| {
-            ui.label("Timing adjust (°):   ");
-            ui.add(egui::Slider::new(&mut app.testing.timing_deg, -10..=10).suffix("°"));
-            if ui.button("Send").clicked() {
-                app.send_activation(activate::IGN_TIMING, app.testing.timing_deg as i8 as u8);
-            }
-        });
+                    ui.label("Timing adjust (°):");
+                    ui.add(egui::Slider::new(&mut app.testing.timing_deg, -10..=10).suffix("°"));
+                    if ui.button("Send").clicked() {
+                        app.send_activation(
+                            activate::IGN_TIMING,
+                            app.testing.timing_deg as i8 as u8,
+                        );
+                    }
+                    ui.end_row();
 
-        ui.horizontal(|ui| {
-            ui.label("AAC adjust (%):     ");
-            ui.add(
-                egui::Slider::new(&mut app.testing.aac_pct, -10.0..=10.0)
-                    .step_by(0.5)
-                    .suffix("%"),
-            );
-            if ui.button("Send").clicked() {
-                app.send_activation(activate::AAC, (app.testing.aac_pct * 2.0) as i8 as u8);
-            }
-        });
+                    ui.label("AAC adjust (%):");
+                    ui.add(
+                        egui::Slider::new(&mut app.testing.aac_pct, -10.0..=10.0)
+                            .step_by(0.5)
+                            .suffix("%"),
+                    );
+                    if ui.button("Send").clicked() {
+                        app.send_activation(activate::AAC, (app.testing.aac_pct * 2.0) as i8 as u8);
+                    }
+                    ui.end_row();
 
-        ui.horizontal(|ui| {
-            ui.label("IACV opening (%):  ");
-            ui.add(
-                egui::Slider::new(&mut app.testing.iacv_pct, 0.0..=100.0)
-                    .step_by(1.0)
-                    .suffix("%"),
-            );
-            if ui.button("Send").clicked() {
-                // 0x85 scale: 0x00 = 0%, 0x8C (140) = 100%.
-                app.send_activation(
-                    activate::IACV_OPENING,
-                    (app.testing.iacv_pct * 1.4).round().clamp(0.0, 140.0) as u8,
-                );
-            }
+                    ui.label("IACV opening (%):");
+                    ui.add(
+                        egui::Slider::new(&mut app.testing.iacv_pct, 0.0..=100.0)
+                            .step_by(1.0)
+                            .suffix("%"),
+                    );
+                    if ui.button("Send").clicked() {
+                        // 0x85 scale: 0x00 = 0%, 0x8C (140) = 100%.
+                        app.send_activation(
+                            activate::IACV_OPENING,
+                            (app.testing.iacv_pct * 1.4).round().clamp(0.0, 140.0) as u8,
+                        );
+                    }
+                    ui.end_row();
+                });
         });
 
         if ui
@@ -625,8 +649,11 @@ fn show_raw(app: &mut ConsultApp, ui: &mut egui::Ui) {
             .cloned()
             .collect::<Vec<_>>()
             .join("\n");
+        // Fill the rail's remaining height (the ROM dump group and the input
+        // row above have already taken their share).
+        let avail = (ui.available_height() - 4.0).max(140.0);
         egui::ScrollArea::vertical()
-            .max_height(430.0)
+            .max_height(avail)
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 ui.add(
